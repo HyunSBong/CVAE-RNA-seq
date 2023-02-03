@@ -1,40 +1,21 @@
 import os
 import numpy as np
-from copy import copy
 import time
-import math
 import argparse
 import pandas as pd
-import warnings
-import random
-import sys
-import pickle
 import argparse
-import wandb
-
-import umap.umap_ as umap
-import seaborn as sns
-import matplotlib.pyplot as plt
+from collections import defaultdict
+from utils import *
+from model import VAE
 
 import torch
-import torch.nn as nn
-from torch.nn.functional import cross_entropy
-from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
-from torchsummary import summary
-
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.model_selection import train_test_split
-from sklearn.manifold import TSNE
 from sklearn.pipeline import Pipeline
-from sklearn.decomposition import PCA
 
-from model import VAE
-
-from pyensembl import EnsemblRelease
-from collections import defaultdict
-
+import wandb
 from torch.utils.tensorboard import SummaryWriter
 writer = SummaryWriter()
 
@@ -92,7 +73,7 @@ def main(args, rna_dataset):
     # one-hot encoding
     le = LabelEncoder()
     le.fit(Y_train)
-    train_targets = le.transform(Y_train)
+    train_targets = le.transform(Y_train) # bladder,uterus,,, -> 0,14,,,
     test_targets = le.transform(Y_test)
 
     train_target = torch.as_tensor(train_targets)
@@ -118,9 +99,12 @@ def main(args, rna_dataset):
             gamma_square = MSE
         else:
             gamma_square = min(MSE, latest_loss.clone())
+        print(gamma_square)
         beta = 0.9
-        return {'GL': (ENTROPY + KLD) / x.size(0), 'MSE': MSE}
 
+        return {'GL': (ENTROPY + KLD) / x.size(0), 'MSE': MSE}
+    
+    print(f'device : {device}')
     vae = VAE(
         encoder_layer_sizes=args.encoder_layer_sizes,
         latent_size=args.latent_size,
@@ -130,6 +114,8 @@ def main(args, rna_dataset):
 
     dataiter = iter(data_loader)
     genes, labels = dataiter.next()
+    # writer.add_graph(vae, genes)
+    # writer.close()
 
     optimizer = torch.optim.Adam(vae.parameters(), lr=args.learning_rate)
 
@@ -144,6 +130,9 @@ def main(args, rna_dataset):
             x, y = x.to(device), y.to(device)
 
             if args.conditional:
+                # print(f'in dataLoader : x is cuda? {x.is_cuda}, y is cuda? {y.is_cuda}')
+                if x.is_cuda != True:
+                    x = x.cuda()
                 recon_x, mean, log_var, z = vae(x, y)
             else:
                 recon_x, mean, log_var, z = vae(x)
@@ -181,82 +170,23 @@ def main(args, rna_dataset):
             test_loss = 0
             for iteration, (x, y) in enumerate(test_loader):
                 recon_x, mean, log_var, z = vae(x, y)
+                # print(f'in testLoader : recon_x is cuda? {recon_x.is_cuda}, mean is cuda? {mean.is_cuda}')
+                # print(f'in testLoader : log_var is cuda? {log_var.is_cuda}, x is cuda? {x.is_cuda}')
+                if x.is_cuda != True:
+                    x = x.cuda()
                 test_loss = loss_fn(recon_x, x, mean, log_var)['GL']
 
                 if iteration == len(test_loader) - 1:
                     print('====> Test set loss: {:.4f}'.format(test_loss.item()))
-    # check quality of reconstruction
+
+    # check quality of reconstruction and draw umap plot
     check_reconstruction_and_sampling_fidelity(vae, le,  scaled_df_values, Y, gene_names)
-
-
-def check_reconstruction_and_sampling_fidelity(vae_model, le, scaled_df_values, Y, gene_names):
-    # get means of original columns based on 100 first rows
-    genes_to_validate = 40
-    original_means = np.mean(scaled_df_values, axis=0)
-    original_vars = np.var(scaled_df_values, axis=0)
-
-    #mean, logvar = vae_model.encode(scaled_df_values, Y)
-    #z = vae_model.reparameterize(mean, logvar)
-
-    #plot_dataset_in_3d_space(z, y_values)
-
-    #x_decoded = vae_model.decode(z, Y)
-
-    #decoded_means = np.mean(x_decoded, axis=0)
-    #decoded_vars = np.var(x_decoded, axis=0)
-
-    with torch.no_grad():
-        number_of_samples = 500
-        labels_to_generate = []
-        for label_value in le.classes_:
-            label_to_generate = [label_value for i in range(number_of_samples)]
-            labels_to_generate += label_to_generate
-        all_samples = np.array(labels_to_generate)
-        #c = torch.from_numpy(all_samples)
-        c = all_samples
-        #print(c)
-        x = vae_model.inference(n=len(all_samples), c=c)
-        print(x)
-
-    sampled_means = np.mean(x.detach().numpy(), axis=0)
-    sampled_vars = np.var(x.detach().numpy(), axis=0)
-
-    plot_reconstruction_fidelity(original_means[:genes_to_validate], sampled_means[:genes_to_validate], metric_name='Mean', df_columns=gene_names)
-    plot_reconstruction_fidelity(original_vars[:genes_to_validate], sampled_vars[:genes_to_validate], metric_name='Variance', df_columns=gene_names)
-
-def plot_reconstruction_fidelity(original_values, sampled_values=[], metric_name='', df_columns=[]):
-    n_groups = len(original_values)
-
-    # create plot
-    fig, ax = plt.subplots()
-    index = np.arange(n_groups)
-    bar_width = 0.35
-    opacity = 0.8
-
-    if len(sampled_values) > 0:
-        plt.bar(index, original_values, bar_width, alpha=opacity, color='b', label='Original')
-        plt.bar(index + bar_width, sampled_values, bar_width, alpha=opacity, color='g', label='Reconstructed')
-        plt.title('Original VS Reconstructed ' + metric_name)
-        plt.xticks(index + bar_width, list(df_columns)[:n_groups], rotation=90)
-        plt.ylabel(metric_name + ' Expression Level (Scaled)')
-        plt.legend()
-    else:
-        plt.bar(index, original_values, bar_width, alpha=opacity, color='b')
-        plt.title(metric_name)
-        plt.xticks(index, list(df_columns)[:n_groups], rotation=90)
-        plt.ylabel('Expression Level (Scaled)')
-        plt.legend()
-
-    plt.xlabel('Gene Name')
-
-    plt.tight_layout()
-    plt.show()
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--epochs", type=int, default=2)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--learning_rate", type=float, default=0.001)
     parser.add_argument("--encoder_layer_sizes", type=list, default=[1000, 512, 256]) #[1000, 512, 256]
