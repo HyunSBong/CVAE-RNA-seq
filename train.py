@@ -51,10 +51,8 @@ def load_data():
     steps = [('standardization', StandardScaler()), ('normalization', MinMaxScaler())]
     pre_processing_pipeline = Pipeline(steps)
     transformed_data = pre_processing_pipeline.fit_transform(df_real[first_1000_genes])
-    # transformed_data = pre_processing_pipeline.fit_transform(df_real[df_real_gene_columns])
 
     scaled_df = pd.DataFrame(transformed_data, columns=first_1000_genes)
-    # scaled_df = pd.DataFrame(transformed_data, columns=df_real_gene_columns)
     X = scaled_df.values
     Y = df_real["TISSUE_GTEX"].values
     X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, stratify=Y)
@@ -122,7 +120,6 @@ def main(args, rna_dataset):
             gamma_square = min(MSE, latest_loss.clone())
         beta = 0.9
         return {'GL': (ENTROPY + KLD) / x.size(0), 'MSE': MSE}
-        #return {'GL': (ENTROPY + 50*KLD) / x.size(0), 'MSE': MSE}
 
     vae = VAE(
         encoder_layer_sizes=args.encoder_layer_sizes,
@@ -147,8 +144,6 @@ def main(args, rna_dataset):
             x, y = x.to(device), y.to(device)
 
             if args.conditional:
-                # print(x.shape)
-                # print(y.shape)
                 recon_x, mean, log_var, z = vae(x, y)
             else:
                 recon_x, mean, log_var, z = vae(x)
@@ -190,45 +185,8 @@ def main(args, rna_dataset):
 
                 if iteration == len(test_loader) - 1:
                     print('====> Test set loss: {:.4f}'.format(test_loss.item()))
-
-    # save synthetic data
-    # generate_synthetic_data_for_analysis(vae, 500, 'trial_1', gene_names, le)
-
-    # save embedding data
-    # generate_embedding_data_for_analysis(vae, scaled_df_values, Y, 'trial_1', le)
-
     # check quality of reconstruction
     check_reconstruction_and_sampling_fidelity(vae, le,  scaled_df_values, Y, gene_names)
-
-def generate_embedding_data_for_analysis(vae, dataset_values, dataset_labels, trial_name, label_encoder):
-    x_emb = []
-    transformed_y = label_encoder.transform(dataset_labels)
-
-    for i, x in enumerate(dataset_values):
-        x_emb.append(np.ravel(vae.embedding(torch.from_numpy(x).float(), transformed_y[i]).detach().numpy()))
-    x_emb = np.array(x_emb)
-
-    pd.DataFrame.from_records(x_emb).to_csv('data/{}_embedding_expressions.csv'.format(trial_name), index=False)
-    pd.DataFrame(dataset_labels, columns=['label']).to_csv('data/{}_embedding_labels.csv'.format(trial_name), index=False)
-
-
-def generate_synthetic_data_for_analysis(vae, samples_per_labels, trial_name, gene_names, label_encoder):
-    with torch.no_grad():
-        y_synthetic = []
-        x_synthetic = []
-        labels_to_generate = []
-
-        for label_value in label_encoder.classes_:
-            label_to_generate = [label_value for i in range(samples_per_labels)]
-            labels_to_generate += label_to_generate
-
-        all_samples = np.array(labels_to_generate)
-        x = vae.inference(n=len(all_samples), c=all_samples)
-        x_synthetic += list(x.detach().numpy())
-        y_synthetic += list(np.ravel(label_encoder.transform(all_samples)))
-
-        pd.DataFrame(x_synthetic, columns=gene_names).to_csv('data/{}_expressions.csv'.format(trial_name), index=False)
-        pd.DataFrame(y_synthetic, columns=['label']).to_csv('data/{}_labels.csv'.format(trial_name), index=False)
 
 
 def check_reconstruction_and_sampling_fidelity(vae_model, le, scaled_df_values, Y, gene_names):
@@ -263,24 +221,8 @@ def check_reconstruction_and_sampling_fidelity(vae_model, le, scaled_df_values, 
     sampled_means = np.mean(x.detach().numpy(), axis=0)
     sampled_vars = np.var(x.detach().numpy(), axis=0)
 
-    #abs_dif = np.divide(np.sum(np.absolute(scaled_df_values - x_decoded), axis=0), df_values.shape[0])
-    #abs_dif_by_mean = np.divide(np.divide(np.sum(np.absolute(df_values - x_decoded), axis=0), df_values.shape[0]), original_means)
-
-   # mean_deviations = np.absolute(original_means - decoded_means)
-    #print(pd.DataFrame(list(zip(df_columns, mean_deviations)), columns=['Gene', 'Mean Dif']).sort_values(by=['Mean Dif'], ascending=False))
-
-    #print(predictions[0][:10])
-    #print(df_values[5][:10])
-    #print(x_decoded[5][:10])
-
     plot_reconstruction_fidelity(original_means[:genes_to_validate], sampled_means[:genes_to_validate], metric_name='Mean', df_columns=gene_names)
     plot_reconstruction_fidelity(original_vars[:genes_to_validate], sampled_vars[:genes_to_validate], metric_name='Variance', df_columns=gene_names)
-    #plot_reconstruction_fidelity(abs_dif[:genes_to_validate], metric_name='Absolute Difference (Sum by samples)')
-    #plot_reconstruction_fidelity(abs_dif_by_mean[:genes_to_validate], metric_name='Absolute Difference (Sum by samples, Divided by gene Mean)')
-
-    #print('Sum of Mean difference by gene: ', np.mean(np.absolute(original_means - decoded_means)))
-    #print('Sum of Absolute difference by gene: ', np.mean(np.sum(np.absolute(df_values - x_decoded), axis=0) / df_values.shape[0]))
-    #print('Sum of Absolute difference divided by gene Mean: ', np.mean(abs_dif_by_mean))
 
 def plot_reconstruction_fidelity(original_values, sampled_values=[], metric_name='', df_columns=[]):
     n_groups = len(original_values)
