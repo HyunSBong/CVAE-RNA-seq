@@ -7,6 +7,84 @@ from sklearn.preprocessing import LabelEncoder
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+###########################
+### Evaluation metrics  ###
+###########################
+def standardize(x, mean=None, std=None):
+    """
+    Shape x: (nb_samples, nb_vars)
+    """
+    if mean is None:
+        mean = np.mean(x, axis=0)
+    if std is None:
+        std = np.std(x, axis=0)
+    return (x - mean) / std
+
+
+def upper_diag_list(m_):
+    """
+    Returns the condensed list of all the values in the upper-diagonal of m_
+    :param m_: numpy array of float. Shape=(N, N)
+    :return: list of values in the upper-diagonal of m_ (from top to bottom and from
+             left to right). Shape=(N*(N-1)/2,)
+    """
+    m = np.triu(m_, k=1)  # Upper triangle of an array.
+    tril = np.zeros_like(m_) + np.nan # m_과 비슷한 0으로 채워진 행렬 + NaN
+    tril = np.tril(tril) # Lower triangle of an array.
+    m += tril
+    m = np.ravel(m) # 1 dimension으로 변환
+    
+    return m[~np.isnan(m)]
+
+def pearson_correlation(x, y):
+    """
+    Computes similarity measure between each pair of genes in the bipartite graph x <-> y
+    :param x: Gene matrix 1. Shape=(nb_samples, nb_genes_1)
+    :param y: Gene matrix 2. Shape=(nb_samples, nb_genes_2)
+    :return: Matrix with shape (nb_genes_1, nb_genes_2) containing the similarity coefficients
+    """
+
+    def standardize(a):
+        a_off = np.mean(a, axis=0)
+        a_std = np.std(a, axis=0)
+        return (a - a_off) / a_std
+
+    assert x.shape[0] == y.shape[0]
+    
+    x_ = standardize(x)
+    y_ = standardize(y)
+    
+    return np.dot(x_.T, y_) / x.shape[0] # 내적
+
+def correlations_list(x, y, corr_fn=pearson_correlation):
+    """
+    Generates correlation list between all pairs of genes in the bipartite graph x <-> y
+    :param x: Gene matrix 1. Shape=(nb_samples, nb_genes_1)
+    :param y: Gene matrix 2. Shape=(nb_samples, nb_genes_2)
+    :param corr_fn: correlation function taking x and y as inputs
+    """
+    corr = corr_fn(x, y) # pearson_correlation
+    return upper_diag_list(corr)
+
+def gamma_coef(x, y):
+    """
+    Compute gamma coefficients for two given expression matrices
+    :param x: matrix of gene expressions. Shape=(nb_samples_1, nb_genes)
+    :param y: matrix of gene expressions. Shape=(nb_samples_2, nb_genes)
+    :return: Gamma(D^X, D^Z)
+    """
+    dists_x = 1 - correlations_list(x, x)
+    dists_y = 1 - correlations_list(y, y)
+    gamma_dx_dy = pearson_correlation(dists_x, dists_y)
+    return gamma_dx_dy
+
+def score_fn(x_test, x_gen):
+    gamma_dx_dz = gamma_coef(x_test, x_gen)
+    return gamma_dx_dz
+
+###########################
+###    UMAP metrics     ###
+###########################
 def tsne_2d(data, **kwargs):
     """
     Transform data to 2d tSNE representation
@@ -94,18 +172,13 @@ def scatter_2d_cancer(data_2d, labels, cancer, colors=None, **kwargs):
     lgnd = plt.legend(markerscale=3)
     return plt.gca()
 
-def check_reconstruction_and_sampling_fidelity(vae_model, le, scaled_df_values, Y, gene_names):
+def generate_synthetic(vae_model, le, X, gene_names, Y_test_tissues):
     genes_to_validate = 40
-    original_means = np.mean(scaled_df_values, axis=0)
-    original_vars = np.var(scaled_df_values, axis=0)
+    original_means = np.mean(X, axis=0)
+    original_vars = np.var(X, axis=0)
 
     with torch.no_grad():
-        number_of_samples = 500
-        labels_to_generate = []
-        for label_value in le.classes_:
-            label_to_generate = [label_value for i in range(number_of_samples)]
-            labels_to_generate += label_to_generate
-        all_samples = np.array(labels_to_generate)
+        all_samples = Y_test_tissues
         
         le = LabelEncoder()
         onehot_c = le.fit_transform(all_samples)
@@ -121,35 +194,75 @@ def check_reconstruction_and_sampling_fidelity(vae_model, le, scaled_df_values, 
     plot_reconstruction_fidelity(original_means[:genes_to_validate], sampled_means[:genes_to_validate], metric_name='Mean', df_columns=gene_names)
     plot_reconstruction_fidelity(original_vars[:genes_to_validate], sampled_vars[:genes_to_validate], metric_name='Variance', df_columns=gene_names)
     
-    x_syn = x.detach().cpu().numpy()
-    plot_umap(x_syn, all_samples)
+    x_syn = x.detach().cpu().numpy() # (7500,1000)
+    print(f'x_syn.shape : {x_syn.shape}')
+    return x_syn
+
+def get_representation(tissue, datasets):
+    cat_dicts = []
+
+    tissues_dict_inv = np.array(list(sorted(set(tissue))))
+    tissues_dict = {t: i for i, t in enumerate(tissues_dict_inv)}
+    tissues = np.vectorize(lambda t: tissues_dict[t])(tissue)
+    cat_dicts.append(tissues_dict_inv)
+
+    dataset_dict_inv = np.array(list(sorted(set(datasets))))
+    dataset_dict = {d: i for i, d in enumerate(dataset_dict_inv)}
+    datasets = np.vectorize(lambda t: dataset_dict[t])(datasets)
+    cat_dicts.append(dataset_dict_inv)
+
+    cat_covs = np.concatenate((tissues[:, None], datasets[:, None]), axis=-1)
+    cat_covs = np.int32(cat_covs)
     
-def plot_umap(x, tissue):
-    model = umap.UMAP(n_neighbors=800,
-                  min_dist=0.0,
-                  n_components=2,
-                  random_state=1111)
-    model.fit(x)
-    emb_2d = model.transform(x)
+    return dataset_dict_inv, cat_covs
+
+def plot_umap(emb_2d, x_test, x_syn, test_tissue, test_dataset):
+    
+    dataset_dict_inv, cat_covs = get_representation(test_tissue, test_dataset)
+    
+    x = np.concatenate((x_test, x_syn), axis=0)
+    t = np.concatenate((test_tissue, test_tissue), axis=0)
+    s = np.array(['real'] * x_test.shape[0] + ['gen'] * x_syn.shape[0])
+    c = np.array(['normal' if dataset_dict_inv[q] != 'tcga-t' else 'cancer' for q in cat_covs[:, 1]])
+    c = np.concatenate((c, c), axis=0)
+    print(f'x : {x.shape}')
+    print(f't : {t.shape}')
+    print(f'c : {c.shape}')
+    print(f's : {s.shape}')
+
+    # model = umap.UMAP(n_neighbors=300,
+    #               min_dist=0.7,
+    #               n_components=2,
+    #               random_state=1111)
+    # model.fit(x)
+    # emb_2d = model.transform(x)
 
     plt.figure(figsize=(18, 6))
     ax = plt.gca()
 
-    plt.subplot(1, 2, 1)
+    plt.subplot(1, 3, 1)
     colors =  plt.get_cmap('tab20').colors
-    ax = scatter_2d(emb_2d, tissue, s=10, marker='.')
+    ax = scatter_2d(emb_2d, t, s=10, marker='.')
     lgd = ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
                     fancybox=True, shadow=True, ncol=3, markerscale=5)
     plt.axis('off')
 
-    # plt.subplot(1, 2, 2)
-    # c = np.array(['normal' if dataset_dict_inv[q] != 'tcga-t' else 'cancer' for q in cat_covs[:, 1]])
-    # # colors = ['brown', 'lightgray']
-    # colors = ['lightgray', 'brown']
-    # ax = scatter_2d(emb_2d, c, colors=colors, s=10, marker='.')
-    # ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
-    #               fancybox=True, shadow=True, ncol=3, markerscale=5)
-    # plt.axis('off')
+    plt.subplot(1, 3, 2)
+    c = np.array(['normal' if dataset_dict_inv[q] != 'tcga-t' else 'cancer' for q in cat_covs[:, 1]])
+    # colors = ['brown', 'lightgray']
+    colors = ['lightgray', 'brown']
+    ax = scatter_2d(emb_2d, s, colors=colors, s=10, marker='.')
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
+                  fancybox=True, shadow=True, ncol=3, markerscale=5)
+    plt.axis('off')
+    
+    plt.subplot(1, 3, 3)
+    # colors = ['lightgray', 'blue']
+    colors = ['blue', 'lightgray']
+    ax = scatter_2d(emb_2d, s, colors=colors, s=10, marker='.')
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
+              fancybox=True, shadow=True, ncol=3, markerscale=5)
+    plt.axis('off')
     
 def plot_reconstruction_fidelity(original_values, sampled_values=[], metric_name='', df_columns=[]):
     n_groups = len(original_values)
