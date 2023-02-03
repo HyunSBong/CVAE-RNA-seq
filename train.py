@@ -19,6 +19,22 @@ import wandb
 from torch.utils.tensorboard import SummaryWriter
 writer = SummaryWriter()
 
+def draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets):
+    x_log = np.log1p(x_syn)
+    x_log = np.float32(x_log)
+    x_mean = np.mean(x_log, axis=0)
+    x_std = np.std(x_log, axis=0)
+    x_log = standardize(x_log, mean=x_mean, std=x_std)
+
+    x = np.concatenate((X_test, x_syn), axis=0)
+    model = umap.UMAP(n_neighbors=300,
+                    min_dist=0.7,
+                    n_components=2,
+                    random_state=1111)
+    model.fit(x)
+    emb_2d = model.transform(x)
+    plot_umap(emb_2d, X_test, x_syn, Y_test_tissues, Y_test_datasets)
+
 def load_data():
     train = pd.read_csv(f'../data/RNAseqDB/x_train_all_tissue.csv')
     test = pd.read_csv(f'../data/RNAseqDB/x_test_all_tissue.csv')
@@ -32,18 +48,20 @@ def load_data():
     steps = [('standardization', StandardScaler()), ('normalization', MinMaxScaler())]
     pre_processing_pipeline = Pipeline(steps)
     transformed_data = pre_processing_pipeline.fit_transform(df_real[first_1000_genes])
+    # transformed_data = pre_processing_pipeline.fit_transform(df_real[df_real_gene_columns])
 
     scaled_df = pd.DataFrame(transformed_data, columns=first_1000_genes)
+    # scaled_df = pd.DataFrame(transformed_data, columns=df_real_gene_columns)
     X = scaled_df.values
-    Y = df_real["TISSUE_GTEX"].values
+    Y = df_real[["TISSUE_GTEX", "DATASET"]].values
     X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, stratify=Y)
     gene_names = df_real_gene_columns.tolist()
 
     dict_train_test_splited = {'train_set': (X_train, Y_train),
-                               'test_set': (X_test, Y_test),
-                               'X_df': scaled_df.values,
-                               'Y': Y,
-                               'gene_names': gene_names}
+                            'test_set': (X_test, Y_test),
+                            'X': X,
+                            'Y': Y,
+                            'gene_names': gene_names}
     return dict_train_test_splited
 
 def main(args, rna_dataset):
@@ -51,30 +69,32 @@ def main(args, rna_dataset):
     latest_loss = torch.tensor(1)
     
     # GPU 
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(args.seed)  
-    if torch.cuda.is_available():
-        os.environ["CUDA_VISIBLE_DEVICES"]= str(args.gpu_id)
-        device = torch.device('cuda')
-    else:
-        device = torch.device('cpu')
+    os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"]= str(args.gpu_id)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print('Device:', device)
+    print('Current cuda device:', torch.cuda.current_device())
+    print('Count of using GPUs:', torch.cuda.device_count())
     
-    # time
-    ts = time.time()
-    
-    # Train/Test dataset
+    # Train/Test dataset & tissues
     (X_train, Y_train) = rna_dataset['train_set']
     (X_test, Y_test) = rna_dataset['test_set']
-    scaled_df_values = rna_dataset['X_df']
+    Y_train_tissues = Y_train[:,0]
+    Y_train_datasets = Y_train[:,1]
+    Y_test_tissues = Y_test[:,0]
+    Y_test_datasets = Y_test[:,1]
     gene_names = rna_dataset['gene_names'] # ex) COL4A1, IFT27,,,
-    Y = rna_dataset['Y'] # ["TISSUE_GTEX"].values
-    LABELS_NUM = len(set(Y)) # 15 (breast, lung, liver 등 15개 tissue)
+    X = rna_dataset['X']
+    Y = rna_dataset['Y'] # [["TISSUE_GTEX", "DATASET"]].values
+    Y_tissues = Y[:,0]
+    Y_datasets = Y[:,1]
+    num_tissue = len(set(Y_tissues)) # 15 (breast, lung, liver 등 15개 tissue)
     
     # one-hot encoding
     le = LabelEncoder()
-    le.fit(Y_train)
-    train_targets = le.transform(Y_train) # bladder,uterus,,, -> 0,14,,,
-    test_targets = le.transform(Y_test)
+    le.fit(Y_train_tissues)
+    train_targets = le.transform(Y_train_tissues) # bladder,uterus,,, -> 0,14,,,
+    test_targets = le.transform(Y_test_tissues)
 
     train_target = torch.as_tensor(train_targets)
     train = torch.tensor(X_train.astype(np.float32))
@@ -99,18 +119,17 @@ def main(args, rna_dataset):
             gamma_square = MSE
         else:
             gamma_square = min(MSE, latest_loss.clone())
-        print(gamma_square)
+        # print(gamma_square)
         beta = 0.9
 
         return {'GL': (ENTROPY + KLD) / x.size(0), 'MSE': MSE}
     
-    print(f'device : {device}')
     vae = VAE(
         encoder_layer_sizes=args.encoder_layer_sizes,
         latent_size=args.latent_size,
         decoder_layer_sizes=args.decoder_layer_sizes,
         conditional=args.conditional,
-        num_labels=LABELS_NUM if args.conditional else 0).to(device)
+        num_labels=num_tissue if args.conditional else 0).to(device)
 
     dataiter = iter(data_loader)
     genes, labels = dataiter.next()
@@ -120,17 +139,20 @@ def main(args, rna_dataset):
     optimizer = torch.optim.Adam(vae.parameters(), lr=args.learning_rate)
 
     logs = defaultdict(list)
+    
+    stop_point = 10
+    best_score = -np.inf
+    initial_stop_point = stop_point
 
     for epoch in range(args.epochs):
         train_loss = 0
         tracker_epoch = defaultdict(lambda: defaultdict(dict))
 
-        for iteration, (x, y) in enumerate(data_loader):
+        for enumer_idx, (x, y) in enumerate(data_loader):
 
             x, y = x.to(device), y.to(device)
 
             if args.conditional:
-                # print(f'in dataLoader : x is cuda? {x.is_cuda}, y is cuda? {y.is_cuda}')
                 if x.is_cuda != True:
                     x = x.cuda()
                 recon_x, mean, log_var, z = vae(x, y)
@@ -154,39 +176,57 @@ def main(args, rna_dataset):
             optimizer.step()
 
             logs['loss'].append(loss.item())
-
-            if iteration % args.print_every == 0 or iteration == len(data_loader)-1:
+            
+            if args.conditional:
+                c = torch.arange(0, num_tissue).long().unsqueeze(1)
+                c = torch.from_numpy(test_targets)
+                x = vae.inference(n=c.size(0), c=c)
+            else:
+                x = vae.inference()
+            
+            if enumer_idx % args.verbose == 0 or enumer_idx == len(data_loader)-1:
                 print("Epoch {:02d}/{:02d} Batch {:04d}/{:d}, Loss {:9.4f}".format(
-                    epoch, args.epochs, iteration, len(data_loader)-1, loss.item()))
+                    epoch, args.epochs, enumer_idx, len(data_loader)-1, loss.item()))
 
                 if args.conditional:
-                    c = torch.arange(0, LABELS_NUM).long().unsqueeze(1)
+                    c = torch.arange(0, num_tissue).long().unsqueeze(1)
+                    c = torch.from_numpy(test_targets)
                     x = vae.inference(n=c.size(0), c=c)
+                    
+                    if epoch % 5 == 0:
+                        score = score_fn(X_test, x.detach().cpu().numpy())
+                        if score > best_score:
+                            best_score = score
+                            stop_point = initial_stop_point
+                        else:
+                            stop_point -= 1
+                        print(f'==>Gamma Score : {score}')
                 else:
                     x = vae.inference()
+                    
+            if stop_point == 0:
+                break   
 
     with torch.no_grad():
         for epoch in range(args.epochs):
             test_loss = 0
-            for iteration, (x, y) in enumerate(test_loader):
+            for enumer_idx, (x, y) in enumerate(test_loader):
                 recon_x, mean, log_var, z = vae(x, y)
-                # print(f'in testLoader : recon_x is cuda? {recon_x.is_cuda}, mean is cuda? {mean.is_cuda}')
-                # print(f'in testLoader : log_var is cuda? {log_var.is_cuda}, x is cuda? {x.is_cuda}')
                 if x.is_cuda != True:
                     x = x.cuda()
                 test_loss = loss_fn(recon_x, x, mean, log_var)['GL']
 
-                if iteration == len(test_loader) - 1:
+                if enumer_idx == len(test_loader) - 1:
                     print('====> Test set loss: {:.4f}'.format(test_loss.item()))
 
-    # check quality of reconstruction and draw umap plot
-    check_reconstruction_and_sampling_fidelity(vae, le,  scaled_df_values, Y, gene_names)
+    x_syn = generate_synthetic(vae, le, X, gene_names, Y_test_tissues)
+    draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets)
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--learning_rate", type=float, default=0.001)
     parser.add_argument("--encoder_layer_sizes", type=list, default=[1000, 512, 256]) #[1000, 512, 256]
@@ -200,4 +240,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     rna_dataset = load_data()
-    main(args, rna_dataset)
+    x_syn = main(args, rna_dataset)
