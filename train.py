@@ -190,7 +190,7 @@ def main(args, rna_dataset):
 
                 if args.conditional:
                     c = torch.arange(0, num_tissue).long().unsqueeze(1)
-                    c = torch.from_numpy(test_targets)
+                    c = torch.from_numpy(test_targets) # le.fit_transform(Y_train_tissues)
                     x = vae.inference(n=c.size(0), c=c)
                     
                     if epoch % 5 == 0:
@@ -229,8 +229,8 @@ if __name__ == '__main__':
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--learning_rate", type=float, default=0.001)
-    parser.add_argument("--encoder_layer_sizes", type=list, default=[1000, 512, 256]) #[1000, 512, 256]
-    parser.add_argument("--decoder_layer_sizes", type=list, default=[256, 512, 1000]) # [256, 512, 1000]
+    parser.add_argument("--embedding_dim", type=list, default=[3000, 512, 256]) 
+    parser.add_argument("--decompress_dims", type=list, default=[256, 512, 3000]) 
     parser.add_argument("--latent_size", type=int, default=50)
     parser.add_argument("--print_every", type=int, default=100)
     parser.add_argument("--fig_root", type=str, default='figs')
@@ -240,4 +240,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     rna_dataset = load_data()
-    x_syn = main(args, rna_dataset)
+    main(args, rna_dataset)

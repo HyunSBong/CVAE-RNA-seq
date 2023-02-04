@@ -19,7 +19,7 @@ def idx2onehot(idx, n):
 
 class VAE(nn.Module):
 
-    def __init__(self, encoder_layer_sizes, latent_size, decoder_layer_sizes,
+    def __init__(self, embedding_dim, latent_size, decompress_dims,
                  conditional=True, num_labels=0):
 
         super().__init__()
@@ -27,17 +27,17 @@ class VAE(nn.Module):
         if conditional:
             assert num_labels > 0
 
-        assert type(encoder_layer_sizes) == list
+        assert type(embedding_dim) == list
         assert type(latent_size) == int
-        assert type(decoder_layer_sizes) == list
+        assert type(decompress_dims) == list
 
         self.latent_size = latent_size
         self.num_labels = num_labels
 
         self.encoder = Encoder(
-            encoder_layer_sizes, latent_size, conditional, num_labels)
+            embedding_dim, latent_size, conditional, num_labels)
         self.decoder = Decoder(
-            decoder_layer_sizes, latent_size, conditional, num_labels)
+            decompress_dims, latent_size, conditional, num_labels)
 
     def forward(self, x, c=None):
         view_size = 1000
@@ -74,8 +74,6 @@ class VAE(nn.Module):
 
     def embedding(self, x, c=None):
         view_size = 1000
-        #if x.dim() > 2:
-        #    x = x.view(-1, view_size)
 
         batch_size = x.size(0)
 
@@ -90,7 +88,6 @@ class VAE(nn.Module):
 class Encoder(nn.Module):
 
     def __init__(self, layer_sizes, latent_size, conditional, num_labels):
-        # print('E init')
 
         super().__init__()
 
