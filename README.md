@@ -5,9 +5,10 @@ To secure sufficient gene expression data, a study that develops and proposes a 
 
 Dataset
 ----------
-GTEx(Genotype-Tissue Expression) Dataset
-TCGA(Cancer Genome Atlas) Dataset
-RNA-seq(human transcriptomics) Dataset (9147 samples and 18154 genes )
+In this study, samples of 15 common tissues (lung, breast, kidney, thyroid, colon, stomach, prostate, saliva, liver, esophageal myopathy, esophageal mucosa, esophageal gastrointestinal tract, bladder, uterus, and cervix) of GTEx and TCGA were used. We followed the [pipeline](https://github.com/mskcc/RNAseqDB) described by Wang et al. (2018) to integrate data and modify the deployment effect. Thus, the entire dataset consists of 9147 samples and 18154 genes.
+ GTEx(Genotype-Tissue Expression) Dataset
+ TCGA(Cancer Genome Atlas) Dataset
+ RNA-seq(human transcriptomics) Dataset (9147 samples and 18154 genes )
 
 UMAP
 ----------
