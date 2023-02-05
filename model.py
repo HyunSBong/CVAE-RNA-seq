@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
+writer = SummaryWriter('logs/')
+
 def idx2onehot(idx, n):
  
     assert torch.max(idx).item() < n
@@ -17,27 +19,38 @@ def idx2onehot(idx, n):
 
     return onehot
 
-class VAE(nn.Module):
+class CVAE(nn.Module):
 
-    def __init__(self, embedding_dim, latent_size, decompress_dims,
-                 conditional=True, num_labels=0):
+    def __init__(self, data_dim, compress_dims, latent_size, decompress_dims, conditional=True, num_labels=0):
 
         super().__init__()
 
         if conditional:
             assert num_labels > 0
 
-        assert type(embedding_dim) == list
+        assert type(compress_dims) == list
         assert type(latent_size) == int
         assert type(decompress_dims) == list
-
+        
+        self.compress_dims = compress_dims
         self.latent_size = latent_size
+        self.decompress_dims = decompress_dims
         self.num_labels = num_labels
-
+        
         self.encoder = Encoder(
-            embedding_dim, latent_size, conditional, num_labels)
+            data_dim, compress_dims, latent_size, conditional, num_labels)
         self.decoder = Decoder(
-            decompress_dims, latent_size, conditional, num_labels)
+            decompress_dims, latent_size, data_dim, conditional, num_labels)
+        
+    def reparameterize(self, means, logvar, batch_size):
+        """Make latent variable z"""
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn([batch_size, self.latent_size])
+        if eps.is_cuda != True:
+            eps = eps.cuda()
+        z = means + std * eps
+        
+        return z
 
     def forward(self, x, c=None):
         view_size = 1000
@@ -51,18 +64,31 @@ class VAE(nn.Module):
         if c.is_cuda != True:
             c = c.cuda()
 
-        means, log_var = self.encoder(x, c)
-
-        std = torch.exp(0.5 * log_var)
+        means, logvar = self.encoder(x, c)
+        
+        """Make latent variable z"""
+        std = torch.exp(0.5 * logvar)
         eps = torch.randn([batch_size, self.latent_size])
         if eps.is_cuda != True:
             eps = eps.cuda()
-        z = eps * std + means
+        z = means + std * eps
+        
         recon_x = self.decoder(z, c)
 
-        return recon_x, means, log_var, z
+        return recon_x, means, logvar, z
+    
+    
 
     def inference(self, n=0, c=None):
+        """
+        Inference gene expression
+        Args:
+            n (int):
+                num of set(tissue).
+            c (tensor):
+                condition tissues.
+                torch.Size([batch_size])
+        """
         if n == 0:
             n = self.num_labels
         batch_size = n
@@ -77,8 +103,8 @@ class VAE(nn.Module):
 
         batch_size = x.size(0)
 
-        means, log_var = self.encoder(x, c)
-        std = torch.exp(0.5 * log_var)
+        means, logvar = self.encoder(x, c)
+        std = torch.exp(0.5 * logvar)
         eps = torch.randn([1, self.latent_size])
         
         z = eps * std + means
@@ -86,60 +112,115 @@ class VAE(nn.Module):
         return z
 
 class Encoder(nn.Module):
+    """
+    Encoder of the VAE
+    Args:
+        data_dim (int):
+            Dimensions of the data.
+        compress_dims (list of ints):
+            Size of each hidden layer.
+        latent_size (int):
+            Size of the output vector.
+        conditional (boolean):
+            VAE Condition status.
+        num_labels (int):
+    """
 
-    def __init__(self, layer_sizes, latent_size, conditional, num_labels):
+    def __init__(self, data_dim, compress_dims, latent_size, conditional, num_labels):
 
         super().__init__()
 
         self.conditional = conditional
         if self.conditional:
-            layer_sizes[0] += num_labels
-
-        self.MLP = nn.Sequential()
+            compress_dims[0] += num_labels
+            data_dim += num_labels
         self.num_labels = num_labels
-
-        for i, (in_size, out_size) in enumerate(zip(layer_sizes[:-1], layer_sizes[1:])):
-            self.MLP.add_module(
-                name="L{:d}".format(i), module=nn.Linear(in_size, out_size))
-            self.MLP.add_module(name="A{:d}".format(i), module=nn.ReLU())
         
-        self.linear_means = nn.Linear(layer_sizes[-1], latent_size)
-        self.linear_log_var = nn.Linear(layer_sizes[-1], latent_size)
+        seq = []
+        seq += [
+            nn.Linear(data_dim, compress_dims[0]),
+            nn.ReLU()
+        ]
+        for i, (in_size, out_size) in enumerate(zip(compress_dims[:-1], compress_dims[1:])):
+            seq += [
+                nn.Linear(in_size, out_size),
+                nn.ReLU()
+            ]
+        self.MLP = nn.Sequential(*seq)
+        self.linear_means = nn.Linear(compress_dims[-1], latent_size)
+        self.linear_logvar = nn.Linear(compress_dims[-1], latent_size)
 
     def forward(self, x, c=None):
+        """Encode the passed x,c
+        Args:
+            x (tensor):
+                torch.Size([batch_size, data_dim])
+            c (tensor):
+                condition tissues.
+                torch.Size([batch_size])
+        Returns:
+            dimensions of the latent space mean and logvar.
+        """
         if self.conditional:
             c = idx2onehot(c, n=self.num_labels)
             x = torch.cat((x, c), dim=-1)
         x = self.MLP(x)
         means = self.linear_means(x)
-        log_vars = self.linear_log_var(x)
+        logvars = self.linear_logvar(x)
 
-        return means, log_vars
+        return means,logvars
 
 class Decoder(nn.Module):
+    """
+    Decoder of the VAE
+    Args:
+        decompress_dims (list of ints):
+            Size of each hidden layer.
+        latent_size (int):
+            Size of the output vector.
+        data_dim (int):
+            Dimensions of the data
+        conditional (boolean):
+            VAE Condition status.
+        num_labels (int):
+    """
 
-    def __init__(self, layer_sizes, latent_size, conditional, num_labels):
+    def __init__(self, decompress_dims, latent_size, data_dim, conditional, num_labels):
 
         super().__init__()
-
-        self.MLP = nn.Sequential()
+        
         self.num_labels = num_labels
-
+        
         self.conditional = conditional
         if self.conditional:
             input_size = latent_size + num_labels
         else:
             input_size = latent_size
-
-        for i, (in_size, out_size) in enumerate(zip([input_size]+layer_sizes[:-1], layer_sizes)):
-            self.MLP.add_module(
-                name="L{:d}".format(i), module=nn.Linear(in_size, out_size))
-            if i+1 < len(layer_sizes):
-                self.MLP.add_module(name="A{:d}".format(i), module=nn.ReLU())
-            else:
-                self.MLP.add_module(name="sigmoid", module=nn.Sigmoid())
+        
+        data_dim = data_dim
+        out_dim = 0
+        seq = []
+        for i, (in_size, out_size) in enumerate(zip([input_size]+decompress_dims[:-1], decompress_dims)):
+            seq += [
+                    nn.Linear(in_size, out_size),
+                    nn.ReLU()
+                ]
+            out_dim = out_size
+            
+        seq += [
+            nn.Linear(out_dim, data_dim),
+            nn.Sigmoid()
+        ]
+        self.MLP = nn.Sequential(*seq)
 
     def forward(self, z, c):
+        """Decode the passed x,c
+        Args:
+            z (tensor):
+                torch.Size([batch_size, data_dim])
+            c (tensor):
+                torch.Size([batch_size])
+        """
         if self.conditional:
             if type(c) != torch.Tensor:
                 c = torch.from_numpy(c)
