@@ -6,7 +6,7 @@ import pandas as pd
 import argparse
 from collections import defaultdict
 from utils import *
-from model import VAE
+from model import CVAE
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -19,12 +19,13 @@ import wandb
 from torch.utils.tensorboard import SummaryWriter
 writer = SummaryWriter()
 
-def draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets):
-    x_log = np.log1p(x_syn)
-    x_log = np.float32(x_log)
-    x_mean = np.mean(x_log, axis=0)
-    x_std = np.std(x_log, axis=0)
-    x_log = standardize(x_log, mean=x_mean, std=x_std)
+def draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets, normalize=False):
+    if normalize:
+        x_log = np.log1p(x_syn)
+        x_log = np.float32(x_log)
+        x_mean = np.mean(x_log, axis=0)
+        x_std = np.std(x_log, axis=0)
+        x_syn = standardize(x_log, mean=x_mean, std=x_std)
 
     x = np.concatenate((X_test, x_syn), axis=0)
     model = umap.UMAP(n_neighbors=300,
@@ -35,23 +36,21 @@ def draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets):
     emb_2d = model.transform(x)
     plot_umap(emb_2d, X_test, x_syn, Y_test_tissues, Y_test_datasets)
 
-def load_data():
+def load_data(num_genes):
     train = pd.read_csv(f'../data/RNAseqDB/x_train_all_tissue.csv')
     test = pd.read_csv(f'../data/RNAseqDB/x_test_all_tissue.csv')
     df_real = pd.concat([train, test])
     
     df_real_gene_columns = df_real.iloc[:,1:-2].columns
-    # 처음 1000개
-    first_1000_genes = list(df_real_gene_columns)[:1000]
+    # 학습할 genes
+    train_genes = list(df_real_gene_columns)[:num_genes]
 
     # normalize expression data for nn
     steps = [('standardization', StandardScaler()), ('normalization', MinMaxScaler())]
     pre_processing_pipeline = Pipeline(steps)
-    transformed_data = pre_processing_pipeline.fit_transform(df_real[first_1000_genes])
-    # transformed_data = pre_processing_pipeline.fit_transform(df_real[df_real_gene_columns])
+    transformed_data = pre_processing_pipeline.fit_transform(df_real[train_genes])
 
-    scaled_df = pd.DataFrame(transformed_data, columns=first_1000_genes)
-    # scaled_df = pd.DataFrame(transformed_data, columns=df_real_gene_columns)
+    scaled_df = pd.DataFrame(transformed_data, columns=train_genes)
     X = scaled_df.values
     Y = df_real[["TISSUE_GTEX", "DATASET"]].values
     X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, stratify=Y)
@@ -77,69 +76,69 @@ def main(args, rna_dataset):
     print('Count of using GPUs:', torch.cuda.device_count())
     
     # Train/Test dataset & tissues
+    X = rna_dataset['X'] # [COL4A1, IFT27,,,].values
+    Y = rna_dataset['Y'] # [["TISSUE_GTEX", "DATASET"]].values
     (X_train, Y_train) = rna_dataset['train_set']
     (X_test, Y_test) = rna_dataset['test_set']
+    Y_tissues = Y[:,0]
+    Y_datasets = Y[:,1]
     Y_train_tissues = Y_train[:,0]
     Y_train_datasets = Y_train[:,1]
     Y_test_tissues = Y_test[:,0]
     Y_test_datasets = Y_test[:,1]
     gene_names = rna_dataset['gene_names'] # ex) COL4A1, IFT27,,,
-    X = rna_dataset['X']
-    Y = rna_dataset['Y'] # [["TISSUE_GTEX", "DATASET"]].values
-    Y_tissues = Y[:,0]
-    Y_datasets = Y[:,1]
+    
     num_tissue = len(set(Y_tissues)) # 15 (breast, lung, liver 등 15개 tissue)
     
     # one-hot encoding
     le = LabelEncoder()
     le.fit(Y_train_tissues)
-    train_targets = le.transform(Y_train_tissues) # bladder,uterus,,, -> 0,14,,,
-    test_targets = le.transform(Y_test_tissues)
-
-    train_target = torch.as_tensor(train_targets)
+    train_labels = le.transform(Y_train_tissues) # bladder,uterus,,, -> 0,14,,,
+    test_labels = le.transform(Y_test_tissues)
+    
+    # DataLoader
+    train_label = torch.as_tensor(train_labels)
     train = torch.tensor(X_train.astype(np.float32))
-    train_tensor = TensorDataset(train, train_target)
-    data_loader = DataLoader(dataset=train_tensor, batch_size=args.batch_size, shuffle=True)
+    train_tensor = TensorDataset(train, train_label)
+    train_loader = DataLoader(dataset=train_tensor, batch_size=args.batch_size, shuffle=True)
 
-    test_target = torch.as_tensor(test_targets)
+    test_label = torch.as_tensor(test_labels)
     test = torch.tensor(X_test.astype(np.float32))
-    test_tensor = TensorDataset(test, test_target)
+    test_tensor = TensorDataset(test, test_label)
     test_loader = DataLoader(dataset=test_tensor, batch_size=args.batch_size, shuffle=True)
     
     # loss function
     def loss_fn(recon_x, x, mean, log_var):
         view_size = 1000
-        ENTROPY = torch.nn.functional.binary_cross_entropy(
+        BCE = torch.nn.functional.binary_cross_entropy(
             recon_x.view(-1, view_size), x.view(-1, view_size), reduction='sum')
-        HALF_LOG_TWO_PI = 0.91893
         MSE = torch.sum((x - recon_x)**2)
         KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
+        
         gamma_square = 0
         if torch.eq(latest_loss, torch.tensor(1)):
             gamma_square = MSE
         else:
             gamma_square = min(MSE, latest_loss.clone())
-        # print(gamma_square)
-        beta = 0.9
 
-        return {'GL': (ENTROPY + KLD) / x.size(0), 'MSE': MSE}
-    
-    vae = VAE(
-        encoder_layer_sizes=args.encoder_layer_sizes,
+        return {'GL': (BCE + KLD) / x.size(0), 'MSE': MSE, 'BCE': BCE, 'KLD': KLD}
+
+    vae = CVAE(
+        data_dim=X_train.shape[1],
+        compress_dims=args.compress_dims,
         latent_size=args.latent_size,
-        decoder_layer_sizes=args.decoder_layer_sizes,
+        decompress_dims=args.decompress_dims,
         conditional=args.conditional,
         num_labels=num_tissue if args.conditional else 0).to(device)
 
-    dataiter = iter(data_loader)
+    dataiter = iter(train_loader)
     genes, labels = dataiter.next()
-    # writer.add_graph(vae, genes)
-    # writer.close()
 
     optimizer = torch.optim.Adam(vae.parameters(), lr=args.learning_rate)
 
     logs = defaultdict(list)
     
+    # Train
     stop_point = 10
     best_score = -np.inf
     initial_stop_point = stop_point
@@ -148,10 +147,9 @@ def main(args, rna_dataset):
         train_loss = 0
         tracker_epoch = defaultdict(lambda: defaultdict(dict))
 
-        for enumer_idx, (x, y) in enumerate(data_loader):
+        for batch_idx, (x, y) in enumerate(train_loader):
 
             x, y = x.to(device), y.to(device)
-
             if args.conditional:
                 if x.is_cuda != True:
                     x = x.cuda()
@@ -165,35 +163,34 @@ def main(args, rna_dataset):
                 tracker_epoch[id]['y'] = z[i, 1].item()
                 tracker_epoch[id]['label'] = yi.item()
 
-            multiple_losses = loss_fn(recon_x, x, mean, log_var)
-            loss = multiple_losses['GL'].clone()
+            losses = loss_fn(recon_x, x, mean, log_var)
+            loss = losses['GL'].clone()
             train_loss += loss
 
-            latest_loss = multiple_losses['MSE'].detach()
+            latest_loss = losses['MSE'].detach()
 
             optimizer.zero_grad()
+            
+            writer.add_scalar("Train/Reconstruction Error",losses['BCE'].detach().item(), batch_idx + epoch * (len(train_loader.dataset)/args.batch_size) )
+            writer.add_scalar("Train/KL-Divergence", losses['KLD'].detach().item(), batch_idx + epoch * (len(train_loader.dataset)/args.batch_size) )
+            writer.add_scalar("Train/Total Loss" , loss.item(), batch_idx + epoch * (len(train_loader.dataset)/args.batch_size) )
+            
             loss.backward(retain_graph=True)
             optimizer.step()
 
             logs['loss'].append(loss.item())
             
-            if args.conditional:
-                c = torch.arange(0, num_tissue).long().unsqueeze(1)
-                c = torch.from_numpy(test_targets)
-                x = vae.inference(n=c.size(0), c=c)
-            else:
-                x = vae.inference()
-            
-            if enumer_idx % args.verbose == 0 or enumer_idx == len(data_loader)-1:
+            if batch_idx % 100 == 0 or batch_idx == len(train_loader)-1:
                 print("Epoch {:02d}/{:02d} Batch {:04d}/{:d}, Loss {:9.4f}".format(
-                    epoch, args.epochs, enumer_idx, len(data_loader)-1, loss.item()))
+                    epoch, args.epochs, batch_idx, len(train_loader)-1, loss.item()))
 
                 if args.conditional:
                     c = torch.arange(0, num_tissue).long().unsqueeze(1)
-                    c = torch.from_numpy(test_targets) # le.fit_transform(Y_train_tissues)
                     x = vae.inference(n=c.size(0), c=c)
                     
                     if epoch % 5 == 0:
+                        c = torch.from_numpy(test_labels) # le.fit_transform(Y_train_tissues)
+                        x = vae.inference(n=c.size(0), c=c)
                         score = score_fn(X_test, x.detach().cpu().numpy())
                         if score > best_score:
                             best_score = score
@@ -210,15 +207,21 @@ def main(args, rna_dataset):
     with torch.no_grad():
         for epoch in range(args.epochs):
             test_loss = 0
-            for enumer_idx, (x, y) in enumerate(test_loader):
+            for batch_idx, (x, y) in enumerate(test_loader):
                 recon_x, mean, log_var, z = vae(x, y)
                 if x.is_cuda != True:
                     x = x.cuda()
-                test_loss = loss_fn(recon_x, x, mean, log_var)['GL']
+                    
+                losses = loss_fn(recon_x, x, mean, log_var)
+                writer.add_scalar("Test/Reconstruction Error",losses['BCE'].detach().item(), batch_idx + epoch * (len(test_loader.dataset)/args.batch_size) )
+                writer.add_scalar("Test/KL-Divergence", losses['KLD'].detach().item(), batch_idx + epoch * (len(test_loader.dataset)/args.batch_size) )
+                writer.add_scalar("Test/Total Loss" , loss.item(), batch_idx + epoch * (len(test_loader.dataset)/args.batch_size) )
+                test_loss = losses['GL'].clone()
 
-                if enumer_idx == len(test_loader) - 1:
+                if batch_idx == len(test_loader) - 1:
                     print('====> Test set loss: {:.4f}'.format(test_loss.item()))
 
+    writer.close()
     x_syn = generate_synthetic(vae, le, X, gene_names, Y_test_tissues)
     draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets)
 
@@ -226,18 +229,18 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--learning_rate", type=float, default=0.001)
-    parser.add_argument("--embedding_dim", type=list, default=[3000, 512, 256]) 
-    parser.add_argument("--decompress_dims", type=list, default=[256, 512, 3000]) 
+    parser.add_argument("--l2scale",type=float, default=0.00001)
+    parser.add_argument("--compress_dims", type=list, default=[1000, 512, 256])
+    parser.add_argument("--decompress_dims", type=list, default=[256, 512, 1000])
     parser.add_argument("--latent_size", type=int, default=50)
-    parser.add_argument("--print_every", type=int, default=100)
-    parser.add_argument("--fig_root", type=str, default='figs')
+    parser.add_argument("--num_genes", type=int, default=1000)
     parser.add_argument("--conditional", action='store_true', default=True)
-    parser.add_argument("--gpu_id", type=int, default=0)
+    parser.add_argument("--gpu_id", type=int, default=2)
 
     args = parser.parse_args()
     
-    rna_dataset = load_data()
+    rna_dataset = load_data(args.num_genes)
     main(args, rna_dataset)
