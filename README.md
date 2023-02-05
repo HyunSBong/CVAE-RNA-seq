@@ -18,7 +18,7 @@ Test 2745 samples, 15000 genes
 Quick start
 ----------
 
-1. First, like  [RNAseqDB](https://github.com/mskcc/RNAseqDB) , we create human transcriptomics data for 15 common tissues.
+1. First, like  [RNAseqDB](https://github.com/mskcc/RNAseqDB) , create human transcriptomics data for 15 common tissues.
 
 2. You can train with the following command (num_genes: train genes)
 ```
