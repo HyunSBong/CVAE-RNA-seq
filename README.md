@@ -12,15 +12,15 @@ In this study, samples of 15 common tissues (lung, breast, kidney, thyroid, colo
 
 UMAP
 ----------
-2745 samples, 3000 genes
-<img width="1433" alt="스크린샷 2023-02-04 오후 10 38 24" src="https://user-images.githubusercontent.com/69189272/216770798-acfb75a2-5e86-4be8-9930-a032d2bafd3f.png">
+Test 2745 samples, 15000 genes
+<img width="1497" alt="sample" src="https://user-images.githubusercontent.com/69189272/216815980-f708dd30-0adf-455d-9cdc-5feb1f9cccfa.png">
 Quick start
 ----------
 
-1. First, like  [RNAseqDB](https://github.com/mskcc/RNAseqDB) below, we create human transcriptomics data for 15 common tissues.
+1. First, like  [RNAseqDB](https://github.com/mskcc/RNAseqDB) , we create human transcriptomics data for 15 common tissues.
 
-2. You can train with the following command
+2. You can train with the following command (num_genes: train genes)
 ```
-python train.py --gpu_id=0 --epochs=300 
+python train.py --gpu_id=0 --epochs=300 --num_genes=1000
 ```
 3. You can see an umap plot is automatically drawn after the train.
