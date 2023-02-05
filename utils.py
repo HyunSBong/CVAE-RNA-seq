@@ -172,6 +172,49 @@ def scatter_2d_cancer(data_2d, labels, cancer, colors=None, **kwargs):
     lgnd = plt.legend(markerscale=3)
     return plt.gca()
 
+def plot_umap(emb_2d, x_test, x_syn, test_tissue, test_dataset):
+    
+    dataset_dict_inv, cat_covs = get_representation(test_tissue, test_dataset)
+    
+    x = np.concatenate((x_test, x_syn), axis=0)
+    t = np.concatenate((test_tissue, test_tissue), axis=0)
+    s = np.array(['real'] * x_test.shape[0] + ['gen'] * x_syn.shape[0])
+    c = np.array(['normal' if dataset_dict_inv[q] != 'tcga-t' else 'cancer' for q in cat_covs[:, 1]])
+    c = np.concatenate((c, c), axis=0)
+    print(f'x : {x.shape}')
+    print(f't : {t.shape}')
+    print(f'c : {c.shape}')
+    print(f's : {s.shape}')
+
+    plt.figure(figsize=(18, 6))
+    ax = plt.gca()
+
+    plt.subplot(1, 3, 1)
+    colors =  plt.get_cmap('tab20').colors
+    ax = scatter_2d(emb_2d, t, s=10, marker='.')
+    lgd = ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
+                    fancybox=True, shadow=True, ncol=3, markerscale=5)
+    plt.axis('off')
+
+    plt.subplot(1, 3, 2)
+    # colors = ['brown', 'lightgray']
+    colors = ['lightgray', 'brown']
+    ax = scatter_2d(emb_2d, s, colors=colors, s=10, marker='.')
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
+                  fancybox=True, shadow=True, ncol=3, markerscale=5)
+    plt.axis('off')
+    
+    plt.subplot(1, 3, 3)
+    # colors = ['lightgray', 'blue']
+    colors = ['blue', 'lightgray']
+    ax = scatter_2d(emb_2d, s, colors=colors, s=10, marker='.')
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
+              fancybox=True, shadow=True, ncol=3, markerscale=5)
+    plt.axis('off')
+
+###########################
+### generate_synthetic  ###
+###########################
 def generate_synthetic(vae_model, le, X, gene_names, Y_test_tissues):
     genes_to_validate = 40
     original_means = np.mean(X, axis=0)
@@ -191,9 +234,6 @@ def generate_synthetic(vae_model, le, X, gene_names, Y_test_tissues):
     sampled_means = np.mean(x.detach().cpu().numpy(), axis=0)
     sampled_vars = np.var(x.detach().cpu().numpy(), axis=0)
 
-    plot_reconstruction_fidelity(original_means[:genes_to_validate], sampled_means[:genes_to_validate], metric_name='Mean', df_columns=gene_names)
-    plot_reconstruction_fidelity(original_vars[:genes_to_validate], sampled_vars[:genes_to_validate], metric_name='Variance', df_columns=gene_names)
-    
     x_syn = x.detach().cpu().numpy() # (7500,1000)
     print(f'x_syn.shape : {x_syn.shape}')
     return x_syn
@@ -216,78 +256,3 @@ def get_representation(tissue, datasets):
     
     return dataset_dict_inv, cat_covs
 
-def plot_umap(emb_2d, x_test, x_syn, test_tissue, test_dataset):
-    
-    dataset_dict_inv, cat_covs = get_representation(test_tissue, test_dataset)
-    
-    x = np.concatenate((x_test, x_syn), axis=0)
-    t = np.concatenate((test_tissue, test_tissue), axis=0)
-    s = np.array(['real'] * x_test.shape[0] + ['gen'] * x_syn.shape[0])
-    c = np.array(['normal' if dataset_dict_inv[q] != 'tcga-t' else 'cancer' for q in cat_covs[:, 1]])
-    c = np.concatenate((c, c), axis=0)
-    print(f'x : {x.shape}')
-    print(f't : {t.shape}')
-    print(f'c : {c.shape}')
-    print(f's : {s.shape}')
-
-    # model = umap.UMAP(n_neighbors=300,
-    #               min_dist=0.7,
-    #               n_components=2,
-    #               random_state=1111)
-    # model.fit(x)
-    # emb_2d = model.transform(x)
-
-    plt.figure(figsize=(18, 6))
-    ax = plt.gca()
-
-    plt.subplot(1, 3, 1)
-    colors =  plt.get_cmap('tab20').colors
-    ax = scatter_2d(emb_2d, t, s=10, marker='.')
-    lgd = ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
-                    fancybox=True, shadow=True, ncol=3, markerscale=5)
-    plt.axis('off')
-
-    plt.subplot(1, 3, 2)
-    c = np.array(['normal' if dataset_dict_inv[q] != 'tcga-t' else 'cancer' for q in cat_covs[:, 1]])
-    # colors = ['brown', 'lightgray']
-    colors = ['lightgray', 'brown']
-    ax = scatter_2d(emb_2d, s, colors=colors, s=10, marker='.')
-    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
-                  fancybox=True, shadow=True, ncol=3, markerscale=5)
-    plt.axis('off')
-    
-    plt.subplot(1, 3, 3)
-    # colors = ['lightgray', 'blue']
-    colors = ['blue', 'lightgray']
-    ax = scatter_2d(emb_2d, s, colors=colors, s=10, marker='.')
-    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
-              fancybox=True, shadow=True, ncol=3, markerscale=5)
-    plt.axis('off')
-    
-def plot_reconstruction_fidelity(original_values, sampled_values=[], metric_name='', df_columns=[]):
-    n_groups = len(original_values)
-
-    # create plot
-    fig, ax = plt.subplots()
-    index = np.arange(n_groups)
-    bar_width = 0.35
-    opacity = 0.8
-
-    if len(sampled_values) > 0:
-        plt.bar(index, original_values, bar_width, alpha=opacity, color='b', label='Original')
-        plt.bar(index + bar_width, sampled_values, bar_width, alpha=opacity, color='g', label='Reconstructed')
-        plt.title('Original VS Reconstructed ' + metric_name)
-        plt.xticks(index + bar_width, list(df_columns)[:n_groups], rotation=90)
-        plt.ylabel(metric_name + ' Expression Level (Scaled)')
-        plt.legend()
-    else:
-        plt.bar(index, original_values, bar_width, alpha=opacity, color='b')
-        plt.title(metric_name)
-        plt.xticks(index, list(df_columns)[:n_groups], rotation=90)
-        plt.ylabel('Expression Level (Scaled)')
-        plt.legend()
-
-    plt.xlabel('Gene Name')
-
-    plt.tight_layout()
-    plt.show()
