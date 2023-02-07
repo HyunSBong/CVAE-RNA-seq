@@ -21,7 +21,7 @@ def idx2onehot(idx, n):
 
 class CVAE(nn.Module):
 
-    def __init__(self, data_dim, compress_dims, latent_size, decompress_dims, conditional=True, num_labels=0):
+    def __init__(self, data_dim, compress_dims, latent_size, decompress_dims, conditional=True, num_labels=0, view_size=1000):
 
         super().__init__()
 
@@ -36,6 +36,7 @@ class CVAE(nn.Module):
         self.latent_size = latent_size
         self.decompress_dims = decompress_dims
         self.num_labels = num_labels
+        self.view_size = view_size
         
         self.encoder = Encoder(
             data_dim, compress_dims, latent_size, conditional, num_labels)
@@ -55,7 +56,7 @@ class CVAE(nn.Module):
     def forward(self, x, c=None):
         view_size = 1000
         if x.dim() > 2:
-            x = x.view(-1, view_size)
+            x = x.view(-1, self.view_size)
 
         batch_size = x.size(0)
         

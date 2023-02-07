@@ -3,7 +3,9 @@ import numpy as np
 import time
 import argparse
 import pandas as pd
-import argparse
+import pickle
+import datetime
+from datetime import datetime
 from collections import defaultdict
 from utils import *
 from model import CVAE
@@ -45,16 +47,22 @@ def load_data(num_genes):
     # 학습할 genes
     train_genes = list(df_real_gene_columns)[:num_genes]
 
-    # normalize expression data for nn
-    steps = [('standardization', StandardScaler()), ('normalization', MinMaxScaler())]
-    pre_processing_pipeline = Pipeline(steps)
-    transformed_data = pre_processing_pipeline.fit_transform(df_real[train_genes])
+    X = df_real[train_genes].values
+    # Log-transform data
+    X = np.log(1 + X)
+    X = np.float32(X)
 
-    scaled_df = pd.DataFrame(transformed_data, columns=train_genes)
-    X = scaled_df.values
     Y = df_real[["TISSUE_GTEX", "DATASET"]].values
     X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, stratify=Y)
-    gene_names = df_real_gene_columns.tolist()
+    gene_names = train_genes
+
+    # Standardization & Normalization data
+    std_scaler = StandardScaler().fit(X_train)
+    X_train = std_scaler.transform(X_train)
+    X_test = std_scaler.transform(X_test)
+    minmax_scaler = MinMaxScaler().fit(X_train)
+    X_train = minmax_scaler.transform(X_train)
+    X_test = minmax_scaler.transform(X_test)
 
     dict_train_test_splited = {'train_set': (X_train, Y_train),
                             'test_set': (X_test, Y_test),
@@ -62,6 +70,41 @@ def load_data(num_genes):
                             'Y': Y,
                             'gene_names': gene_names}
     return dict_train_test_splited
+
+def generate_synthetic_n_save(vae_model, le, X, gene_names, Y_test_tissues, epoch, trial_name, dim_size):
+    genes_to_validate = 40
+    original_means = np.mean(X, axis=0)
+    original_vars = np.var(X, axis=0)
+    model_dir = '../checkpoints/models/cvae/'
+
+    with torch.no_grad():
+        x_synthetic = []
+        y_synthetic = []
+        
+        all_samples = Y_test_tissues
+        le = LabelEncoder()
+        onehot_c = le.fit_transform(all_samples)
+        
+        c = all_samples # ['bladder' 'bladder' 'bladder' ... 'uterus' 'uterus' 'uterus']
+        c = torch.from_numpy(onehot_c) # [0 0 0 ... 14 14 14]
+        x = vae_model.inference(n=len(all_samples), c=c)
+        
+        x_syn = x.detach().cpu().numpy() # (7500,1000)
+
+        x_synthetic += list(x.detach().cpu().numpy())
+        y_synthetic += list(np.ravel(le.transform(all_samples)))
+        
+        print(f'x_syn.shape : {x_syn.shape}')
+        date_val = datetime.today().strftime("%Y%m%d%H%M")
+
+        file = f'../checkpoints/models/cvae/gen_rnaseqdb_cvae_{date_val}_{trial_name}_epoch{epoch}_dim{dim_size}_.pkl'
+        data = {'model': vae_model,
+                'x_syn': x_syn
+                }
+        with open(file, 'wb') as files:
+            pickle.dump(data, files)
+            
+    return x_syn
 
 def main(args, rna_dataset):
     torch.manual_seed(args.seed)
@@ -89,6 +132,7 @@ def main(args, rna_dataset):
     gene_names = rna_dataset['gene_names'] # ex) COL4A1, IFT27,,,
     
     num_tissue = len(set(Y_tissues)) # 15 (breast, lung, liver 등 15개 tissue)
+    view_size = X.shape[1]
     
     # one-hot encoding
     le = LabelEncoder()
@@ -109,19 +153,12 @@ def main(args, rna_dataset):
     
     # loss function
     def loss_fn(recon_x, x, mean, log_var):
-        view_size = 1000
-        BCE = torch.nn.functional.binary_cross_entropy(
+        reconstr_loss = torch.nn.functional.binary_cross_entropy(
             recon_x.view(-1, view_size), x.view(-1, view_size), reduction='sum')
+        latent_loss = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
         MSE = torch.sum((x - recon_x)**2)
-        KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
-        
-        gamma_square = 0
-        if torch.eq(latest_loss, torch.tensor(1)):
-            gamma_square = MSE
-        else:
-            gamma_square = min(MSE, latest_loss.clone())
 
-        return {'GL': (BCE + KLD) / x.size(0), 'MSE': MSE, 'BCE': BCE, 'KLD': KLD}
+        return {'GL': (reconstr_loss + latent_loss) / x.size(0), 'MSE': MSE, 'reconstr_loss': reconstr_loss, 'latent_loss': latent_loss}
 
     vae = CVAE(
         data_dim=X_train.shape[1],
@@ -129,6 +166,7 @@ def main(args, rna_dataset):
         latent_size=args.latent_size,
         decompress_dims=args.decompress_dims,
         conditional=args.conditional,
+        view_size = view_size,
         num_labels=num_tissue if args.conditional else 0).to(device)
 
     dataiter = iter(train_loader)
@@ -136,7 +174,7 @@ def main(args, rna_dataset):
 
     optimizer = torch.optim.Adam(vae.parameters(), lr=args.learning_rate)
 
-    logs = defaultdict(list)
+    # logs = defaultdict(list)
     
     # Train
     stop_point = 10
@@ -144,12 +182,17 @@ def main(args, rna_dataset):
     initial_stop_point = stop_point
 
     for epoch in range(args.epochs):
+        train_epoch = epoch
+        if stop_point_done:
+            train_epoch = epoch - 1
+            break
         train_loss = 0
         tracker_epoch = defaultdict(lambda: defaultdict(dict))
 
         for batch_idx, (x, y) in enumerate(train_loader):
 
             x, y = x.to(device), y.to(device)
+
             if args.conditional:
                 if x.is_cuda != True:
                     x = x.cuda()
@@ -162,32 +205,29 @@ def main(args, rna_dataset):
                 tracker_epoch[id]['x'] = z[i, 0].item()
                 tracker_epoch[id]['y'] = z[i, 1].item()
                 tracker_epoch[id]['label'] = yi.item()
-
+            
             losses = loss_fn(recon_x, x, mean, log_var)
-            loss = losses['GL'].clone()
+            loss = losses['GL'].clone() #  KL-Divergence + reconstruction error / x.size(0)
             train_loss += loss
 
             latest_loss = losses['MSE'].detach()
 
             optimizer.zero_grad()
             
-            writer.add_scalar("Train/Reconstruction Error",losses['BCE'].detach().item(), batch_idx + epoch * (len(train_loader.dataset)/args.batch_size) )
-            writer.add_scalar("Train/KL-Divergence", losses['KLD'].detach().item(), batch_idx + epoch * (len(train_loader.dataset)/args.batch_size) )
-            writer.add_scalar("Train/Total Loss" , loss.item(), batch_idx + epoch * (len(train_loader.dataset)/args.batch_size) )
+            # writer.add_scalar("Train/Reconstruction Error",losses['BCE'].detach().item(), batch_idx + epoch * (len(train_loader.dataset)/args.batch_size) )
+            # writer.add_scalar("Train/KL-Divergence", losses['KLD'].detach().item(), batch_idx + epoch * (len(train_loader.dataset)/args.batch_size) )
+            # writer.add_scalar("Train/Total Loss" , loss.item(), batch_idx + epoch * (len(train_loader.dataset)/args.batch_size) )
             
             loss.backward(retain_graph=True)
             optimizer.step()
 
-            logs['loss'].append(loss.item())
+            # logs['loss'].append(loss.item())
             
             if batch_idx % 100 == 0 or batch_idx == len(train_loader)-1:
                 print("Epoch {:02d}/{:02d} Batch {:04d}/{:d}, Loss {:9.4f}".format(
                     epoch, args.epochs, batch_idx, len(train_loader)-1, loss.item()))
 
                 if args.conditional:
-                    c = torch.arange(0, num_tissue).long().unsqueeze(1)
-                    x = vae.inference(n=c.size(0), c=c)
-                    
                     if epoch % 5 == 0:
                         c = torch.from_numpy(test_labels) # le.fit_transform(Y_train_tissues)
                         x = vae.inference(n=c.size(0), c=c)
@@ -195,14 +235,18 @@ def main(args, rna_dataset):
                         if score > best_score:
                             best_score = score
                             stop_point = initial_stop_point
+                            x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_004', X.shape[1])
                         else:
                             stop_point -= 1
                         print(f'==>Gamma Score : {score}')
+                        print(f'==>stop_point : {stop_point}')
                 else:
                     x = vae.inference()
                     
             if stop_point == 0:
-                break   
+                train_epoch = epoch
+                x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_004', X.shape[1])
+                stop_point_done = True
 
     with torch.no_grad():
         for epoch in range(args.epochs):
@@ -221,8 +265,7 @@ def main(args, rna_dataset):
                 if batch_idx == len(test_loader) - 1:
                     print('====> Test set loss: {:.4f}'.format(test_loss.item()))
 
-    writer.close()
-    x_syn = generate_synthetic(vae, le, X, gene_names, Y_test_tissues)
+    # writer.close()
     draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets)
 
 if __name__ == '__main__':
