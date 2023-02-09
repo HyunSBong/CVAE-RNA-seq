@@ -12,9 +12,9 @@ In this study, samples of 15 common tissues (lung, breast, kidney, thyroid, colo
 
 UMAP
 ----------
-Test 2745 samples, 18000 genes.
+- Test 2745 samples, 18000 genes.
 <img width="590" alt="sample_umap" src="https://user-images.githubusercontent.com/69189272/217756058-43195c7f-4fb9-493a-9e5a-359f9778d23b.png">
-Compare with datasets such as [Ramon Viñas, Helena Andrés-Terré, Pietro Liò, Kevin Bryson, Adversarial generation of gene expression data, Bioinformatics, Volume 38, Issue 3, February 2022, Pages 730–737]
+- Compare with datasets such as [Ramon Viñas, Helena Andrés-Terré, Pietro Liò, Kevin Bryson, Adversarial generation of gene expression data, Bioinformatics, Volume 38, Issue 3, February 2022, Pages 730–737]
 <img width="1417" alt="bioinfo_sample" src="https://user-images.githubusercontent.com/69189272/217756386-82593ab1-4e83-4e23-9089-27ad56917c97.png">
 
 
