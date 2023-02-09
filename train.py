@@ -11,6 +11,7 @@ from utils import *
 from model import CVAE
 
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
@@ -118,6 +119,10 @@ def main(args, rna_dataset):
     print('Current cuda device:', torch.cuda.current_device())
     print('Count of using GPUs:', torch.cuda.device_count())
     
+    multivariate = False
+    if args.multivariate == 1:
+        multivariate = True
+    
     # Train/Test dataset & tissues
     X = rna_dataset['X'] # [COL4A1, IFT27,,,].values
     Y = rna_dataset['Y'] # [["TISSUE_GTEX", "DATASET"]].values
@@ -133,6 +138,7 @@ def main(args, rna_dataset):
     
     num_tissue = len(set(Y_tissues)) # 15 (breast, lung, liver 등 15개 tissue)
     view_size = X.shape[1]
+    log2pi = torch.log2(torch.Tensor([np.pi]))
     
     # one-hot encoding
     le = LabelEncoder()
@@ -152,13 +158,28 @@ def main(args, rna_dataset):
     test_loader = DataLoader(dataset=test_tensor, batch_size=args.batch_size, shuffle=True)
     
     # loss function
-    def loss_fn(recon_x, x, mean, log_var):
-        reconstr_loss = torch.nn.functional.binary_cross_entropy(
-            recon_x.view(-1, view_size), x.view(-1, view_size), reduction='sum')
-        latent_loss = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
-        MSE = torch.sum((x - recon_x)**2)
-
-        return {'GL': (reconstr_loss + latent_loss) / x.size(0), 'MSE': MSE, 'reconstr_loss': reconstr_loss, 'latent_loss': latent_loss}
+    mse_criterion = nn.MSELoss(size_average=False)
+    def loss_fn(mean, log_var, recon_x=None, z=None, z_mean=None, z_log_var=None, multivariate=False):
+        if multivariate:
+            # reconstruction error
+            # reconstr_loss = mse_criterion(
+                # z_mean.view(-1, view_size), x.view(-1, view_size), reduction='sum')
+            reconstr_loss = log2pi + z_log_var + (x - z_mean) ** 2 / (2 * torch.exp(z_log_var))
+            
+            # Kullback-Leibler divergence
+            latent_loss = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
+            MSE = torch.sum(x - 1)**2 # ignore
+            
+            return {'reconstr_latent_loss': (reconstr_loss + latent_loss) / x.size(0), 'MSE': MSE, 'reconstr_loss': reconstr_loss, 'latent_loss': latent_loss}
+        else:
+            # reconstruction error
+            reconstr_loss = torch.nn.functional.binary_cross_entropy(
+                recon_x.view(-1, view_size), x.view(-1, view_size), reduction='sum')
+            # Kullback-Leibler divergence
+            latent_loss = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
+            MSE = torch.sum((x - recon_x)**2)
+            
+            return {'reconstr_latent_loss': (reconstr_loss + latent_loss) / x.size(0), 'MSE': MSE, 'reconstr_loss': reconstr_loss, 'latent_loss': latent_loss}
 
     vae = CVAE(
         data_dim=X_train.shape[1],
@@ -167,19 +188,20 @@ def main(args, rna_dataset):
         decompress_dims=args.decompress_dims,
         conditional=args.conditional,
         view_size = view_size,
+        multivariate = multivariate,
         num_labels=num_tissue if args.conditional else 0).to(device)
 
     dataiter = iter(train_loader)
     genes, labels = dataiter.next()
 
     optimizer = torch.optim.Adam(vae.parameters(), lr=args.learning_rate)
-
-    # logs = defaultdict(list)
     
     # Train
     stop_point = 10
     best_score = -np.inf
     initial_stop_point = stop_point
+    stop_point_done = False
+    losses = []
 
     for epoch in range(args.epochs):
         train_epoch = epoch
@@ -187,30 +209,47 @@ def main(args, rna_dataset):
             train_epoch = epoch - 1
             break
         train_loss = 0
-        tracker_epoch = defaultdict(lambda: defaultdict(dict))
 
         for batch_idx, (x, y) in enumerate(train_loader):
 
             x, y = x.to(device), y.to(device)
 
-            if args.conditional:
+            if args.conditional and multivariate:
+                if x.is_cuda != True:
+                    x = x.cuda()
+                mean, log_var, z_mean, z_log_var = vae(x, y)
+                losses = loss_fn(
+                    mean = mean, 
+                    log_var = log_var, 
+                    z_mean = z_mean, 
+                    z_log_var = z_log_var, 
+                    multivariate = multivariate)
+                print(f'z_mean : {z_mean.shape}')
+                print(f'x : {x.shape}')
+            elif args.conditional and multivariate==False:
                 if x.is_cuda != True:
                     x = x.cuda()
                 recon_x, mean, log_var, z = vae(x, y)
+                losses = loss_fn(
+                    mean = mean, 
+                    log_var = log_var, 
+                    recon_x = recon_x, 
+                    z = z, 
+                    multivariate = multivariate)
             else:
                 recon_x, mean, log_var, z = vae(x)
-
-            for i, yi in enumerate(y):
-                id = len(tracker_epoch)
-                tracker_epoch[id]['x'] = z[i, 0].item()
-                tracker_epoch[id]['y'] = z[i, 1].item()
-                tracker_epoch[id]['label'] = yi.item()
-            
-            losses = loss_fn(recon_x, x, mean, log_var)
-            loss = losses['GL'].clone() #  KL-Divergence + reconstruction error / x.size(0)
+                losses = loss_fn(
+                    mean = mean, 
+                    log_var = log_var, 
+                    recon_x = recon_x, 
+                    z = z, 
+                    multivariate = multivariate)
+            # losses = loss_fn(mean, log_var, recon_x, z, z_mean, z_log_var, multivariate)
+            # losses = loss_fn(x, mean, log_var, z_mean, z_log_var, multivariate)
+            loss = losses['reconstr_latent_loss'].clone() #  KL-Divergence + reconstruction error / x.size(0)
             train_loss += loss
 
-            latest_loss = losses['MSE'].detach()
+            # latest_loss = losses['MSE'].detach()
 
             optimizer.zero_grad()
             
@@ -229,13 +268,19 @@ def main(args, rna_dataset):
 
                 if args.conditional:
                     if epoch % 5 == 0:
+                        # generate gene
                         c = torch.from_numpy(test_labels) # le.fit_transform(Y_train_tissues)
                         x = vae.inference(n=c.size(0), c=c)
+                        if multivariate:
+                            mean, log_var, z_mean, z_log_var = vae(x, y)
+                        elif multivariate == False:
+                            x = vae.inference(n=c.size(0), c=c)
                         score = score_fn(X_test, x.detach().cpu().numpy())
                         if score > best_score:
                             best_score = score
                             stop_point = initial_stop_point
-                            x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_004', X.shape[1])
+                            x_syn = save_synthetic(vae, x, train_epoch, 'trial_005', X.shape[1])
+                            # x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_004', X.shape[1])
                         else:
                             stop_point -= 1
                         print(f'==>Gamma Score : {score}')
@@ -245,9 +290,10 @@ def main(args, rna_dataset):
                     
             if stop_point == 0:
                 train_epoch = epoch
-                x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_004', X.shape[1])
+                x_syn = save_synthetic(vae, x, train_epoch, 'trial_005', X.shape[1])
+                # x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_005', X.shape[1])
                 stop_point_done = True
-
+        
     with torch.no_grad():
         for epoch in range(args.epochs):
             test_loss = 0
@@ -257,9 +303,9 @@ def main(args, rna_dataset):
                     x = x.cuda()
                     
                 losses = loss_fn(recon_x, x, mean, log_var)
-                writer.add_scalar("Test/Reconstruction Error",losses['BCE'].detach().item(), batch_idx + epoch * (len(test_loader.dataset)/args.batch_size) )
-                writer.add_scalar("Test/KL-Divergence", losses['KLD'].detach().item(), batch_idx + epoch * (len(test_loader.dataset)/args.batch_size) )
-                writer.add_scalar("Test/Total Loss" , loss.item(), batch_idx + epoch * (len(test_loader.dataset)/args.batch_size) )
+                # writer.add_scalar("Test/Reconstruction Error",losses['BCE'].detach().item(), batch_idx + epoch * (len(test_loader.dataset)/args.batch_size) )
+                # writer.add_scalar("Test/KL-Divergence", losses['KLD'].detach().item(), batch_idx + epoch * (len(test_loader.dataset)/args.batch_size) )
+                # writer.add_scalar("Test/Total Loss" , loss.item(), batch_idx + epoch * (len(test_loader.dataset)/args.batch_size) )
                 test_loss = losses['GL'].clone()
 
                 if batch_idx == len(test_loader) - 1:
@@ -272,7 +318,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--learning_rate", type=float, default=0.001)
     parser.add_argument("--l2scale",type=float, default=0.00001)
@@ -281,7 +327,8 @@ if __name__ == '__main__':
     parser.add_argument("--latent_size", type=int, default=50)
     parser.add_argument("--num_genes", type=int, default=1000)
     parser.add_argument("--conditional", action='store_true', default=True)
-    parser.add_argument("--gpu_id", type=int, default=2)
+    parser.add_argument("--gpu_id", type=int, default=0)
+    parser.add_argument("--multivariate", type=int, default=0)
 
     args = parser.parse_args()
     

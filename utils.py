@@ -1,5 +1,8 @@
 import torch
 import numpy as np
+import pickle
+import datetime
+from datetime import datetime
 
 import umap.umap_ as umap
 from sklearn.manifold import TSNE
@@ -256,3 +259,66 @@ def get_representation(tissue, datasets):
     
     return dataset_dict_inv, cat_covs
 
+###########################
+###    save_synthetic   ###
+###########################
+def save_synthetic(vae_model, x, epoch, trial_name, dim_size):
+    model_dir = '../checkpoints/models/cvae/'
+
+    with torch.no_grad():
+        x_syn = x.detach().cpu().numpy() # (7500,1000)
+        
+        date_val = datetime.today().strftime("%Y%m%d%H%M")
+        
+        file = f'../checkpoints/models/cvae/gen_rnaseqdb_cvae_{date_val}_{trial_name}_epoch{epoch}_dim{dim_size}_.pkl'
+        data = {'model': vae_model,
+                'x_syn': x_syn
+                }
+        with open(file, 'wb') as files:
+            pickle.dump(data, files)
+            
+    return x_syn
+
+def generate_synthetic_n_save(vae_model, le, X, gene_names, Y_test_tissues, epoch, trial_name, dim_size):
+    genes_to_validate = 40
+    original_means = np.mean(X, axis=0)
+    original_vars = np.var(X, axis=0)
+    model_dir = '../checkpoints/models/cvae/'
+
+    with torch.no_grad():
+        # number_of_samples = 500
+        # labels_to_generate = []
+        x_synthetic = []
+        y_synthetic = []
+        
+        # for label_value in label_encoder.classes_:
+        #     label_to_generate = [label_value for i in range(samples_per_labels)]
+        #     labels_to_generate += label_to_generate
+        # all_samples = np.array(labels_to_generate)
+        all_samples = Y_test_tissues
+        le = LabelEncoder()
+        onehot_c = le.fit_transform(all_samples)
+        
+        c = all_samples # ['bladder' 'bladder' 'bladder' ... 'uterus' 'uterus' 'uterus']
+        c = torch.from_numpy(onehot_c) # [0 0 0 ... 14 14 14]
+        x = vae_model.inference(n=len(all_samples), c=c)
+        
+        x_syn = x.detach().cpu().numpy() # (7500,1000)
+
+        x_synthetic += list(x.detach().cpu().numpy())
+        y_synthetic += list(np.ravel(le.transform(all_samples)))
+        
+        print(f'x_syn.shape : {x_syn.shape}')
+        date_val = datetime.today().strftime("%Y%m%d%H%M")
+        
+        # pd.DataFrame(x_synthetic, columns=gene_names).to_csv(f'{model_dir}gen_rnaseqdb_cvae_{date_val}_{trial_name}_epoch{epoch}_dim{dim_size}_expressions.csv', index=False)
+        # pd.DataFrame(y_synthetic, columns=['label']).to_csv(f'{model_dir}gen_rnaseqdb_cvae_{date_val}_{trial_name}_epoch{epoch}_dim{dim_size}_labels.csv', index=False)
+   
+        file = f'../checkpoints/models/cvae/gen_rnaseqdb_cvae_{date_val}_{trial_name}_epoch{epoch}_dim{dim_size}_.pkl'
+        data = {'model': vae_model,
+                'x_syn': x_syn
+                }
+        with open(file, 'wb') as files:
+            pickle.dump(data, files)
+            
+    return x_syn
