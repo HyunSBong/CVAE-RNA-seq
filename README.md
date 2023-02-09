@@ -12,16 +12,19 @@ In this study, samples of 15 common tissues (lung, breast, kidney, thyroid, colo
 
 UMAP
 ----------
-Test 2745 samples, 15000 genes
-<img width="1497" alt="sample" src="https://user-images.githubusercontent.com/69189272/216815980-f708dd30-0adf-455d-9cdc-5feb1f9cccfa.png">
+Test 2745 samples, 18000 genes.
+<img width="590" alt="sample_umap" src="https://user-images.githubusercontent.com/69189272/217756058-43195c7f-4fb9-493a-9e5a-359f9778d23b.png">
+Compare with datasets such as [Ramon Viñas, Helena Andrés-Terré, Pietro Liò, Kevin Bryson, Adversarial generation of gene expression data, Bioinformatics, Volume 38, Issue 3, February 2022, Pages 730–737]
+<img width="1417" alt="bioinfo_sample" src="https://user-images.githubusercontent.com/69189272/217756386-82593ab1-4e83-4e23-9089-27ad56917c97.png">
+
 
 Quick start
 ----------
 
 1. First, like  [RNAseqDB](https://github.com/mskcc/RNAseqDB) , create human transcriptomics data for 15 common tissues.
 
-2. You can train with the following command (num_genes: train genes)
+2. You can train with the following command (num_genes: train genes, multivatiable: decoder 0;bernoulli, 1;gaussian)
 ```
-python train.py --gpu_id=0 --epochs=300 --num_genes=1000
+python train.py --gpu_id=0 --epochs=300 --num_genes=1000 --multivatiable=0
 ```
 3. You can see an umap plot is automatically drawn after the train.
