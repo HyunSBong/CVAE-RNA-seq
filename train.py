@@ -162,9 +162,9 @@ def main(args, rna_dataset):
     def loss_fn(mean, log_var, recon_x=None, z=None, z_mean=None, z_log_var=None, multivariate=False):
         if multivariate:
             # reconstruction error
-            # reconstr_loss = mse_criterion(
-                # z_mean.view(-1, view_size), x.view(-1, view_size), reduction='sum')
-            reconstr_loss = log2pi + z_log_var + (x - z_mean) ** 2 / (2 * torch.exp(z_log_var))
+            reconstr_loss = mse_criterion(
+                z_mean.view(-1, view_size), x.view(-1, view_size), reduction='sum')
+            # reconstr_loss = log2pi + z_log_var + (x - z_mean) ** 2 / (2 * torch.exp(z_log_var))
             
             # Kullback-Leibler divergence
             latent_loss = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
@@ -224,8 +224,6 @@ def main(args, rna_dataset):
                     z_mean = z_mean, 
                     z_log_var = z_log_var, 
                     multivariate = multivariate)
-                print(f'z_mean : {z_mean.shape}')
-                print(f'x : {x.shape}')
             elif args.conditional and multivariate==False:
                 if x.is_cuda != True:
                     x = x.cuda()
@@ -244,8 +242,7 @@ def main(args, rna_dataset):
                     recon_x = recon_x, 
                     z = z, 
                     multivariate = multivariate)
-            # losses = loss_fn(mean, log_var, recon_x, z, z_mean, z_log_var, multivariate)
-            # losses = loss_fn(x, mean, log_var, z_mean, z_log_var, multivariate)
+                    
             loss = losses['reconstr_latent_loss'].clone() #  KL-Divergence + reconstruction error / x.size(0)
             train_loss += loss
 
