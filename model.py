@@ -69,7 +69,7 @@ class CVAE(nn.Module):
         
         """Make latent variable z"""
         std = torch.exp(0.5 * logvar)
-        eps = torch.randn([batch_size, self.latent_size])
+        eps = torch.randn_like(std)
         if eps.is_cuda != True:
             eps = eps.cuda()
         z = means + std * eps # latent vector
@@ -79,6 +79,7 @@ class CVAE(nn.Module):
             z_means, z_logvar = self.decoder(z, c)
             return means, logvar, z_means, z_logvar
         else:
+            # bernoulli decoder
             recon_x = self.decoder(z, c)
             return recon_x, means, logvar, z
     
@@ -166,12 +167,15 @@ class Encoder(nn.Module):
         """Encode the passed x,c
         Args:
             x (tensor):
+                datas.
                 torch.Size([batch_size, data_dim])
             c (tensor):
                 condition tissues.
                 torch.Size([batch_size])
         Returns:
             dimensions of the latent space mean and logvar.
+            means : (Tensor) Mean of the latent Gaussian
+            logvars : (Tensor) Standard deviation of the latent Gaussian
         """
         if self.conditional:
             c = idx2onehot(c, n=self.num_labels)
@@ -227,6 +231,7 @@ class Decoder(nn.Module):
             self.linear_z_means = nn.Linear(out_dim, data_dim)
             self.linear_z_logvar = nn.Linear(out_dim, data_dim)
         else:
+            # bernoulli decoder
             seq += [
                 nn.Linear(out_dim, data_dim),
                 nn.Sigmoid()
@@ -237,8 +242,10 @@ class Decoder(nn.Module):
         """Decode the passed x,c
         Args:
             z (tensor):
+                datas.
                 torch.Size([batch_size, data_dim])
             c (tensor):
+                condition tissues.
                 torch.Size([batch_size])
         """
         if self.conditional:
@@ -256,4 +263,5 @@ class Decoder(nn.Module):
             logvars = self.linear_z_logvar(x)
             return means, logvars
         else:
+            # bernoulli decoder
             return x
