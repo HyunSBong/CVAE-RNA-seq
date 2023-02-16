@@ -110,7 +110,7 @@ def generate_synthetic_n_save(vae_model, le, X, gene_names, Y_test_tissues, epoc
 
 def main(args, rna_dataset):
     # wandb
-    wandb.init(project="VAE", reinit=True)
+    wandb.init(project="CVAE", reinit=True)
     wandb.config.update(args)
     
     torch.manual_seed(args.seed)
@@ -210,10 +210,6 @@ def main(args, rna_dataset):
     score = 0
 
     for epoch in range(args.epochs):
-        train_epoch = epoch
-        if stop_point_done:
-            train_epoch = epoch - 1
-            break
         train_loss = 0
         sum_elbo = 0
         sum_kl_loss = 0
@@ -244,22 +240,26 @@ def main(args, rna_dataset):
             optimizer.zero_grad()
             loss.backward(retain_graph=True)
             optimizer.step()
-
+            
+            # c = torch.from_numpy(test_labels) # le.fit_transform(Y_train_tissues)
+            # x = vae.inference(n=c.size(0), c=c)
+            # score = score_fn(X_test, x.detach().cpu().numpy())
+            # wandb.log({
+            #     "ELBO": loss.item(),
+            #     "Reconstruction Error": losses['reconstr_loss'].item(),
+            #     "KL-Divergence": losses['kl_loss'].item(),
+            #     "Gamma Score": score
+            # })
+            
         c = torch.from_numpy(test_labels) # le.fit_transform(Y_train_tissues)
         x = vae.inference(n=c.size(0), c=c)
         score = score_fn(X_test, x.detach().cpu().numpy())
-        # wandb.log({
-        #     "ELBO": loss.item(),
-        #     "Reconstruction Error": losses['reconstr_loss'].item(),
-        #     "KL-Divergence": losses['kl_loss'].item(),
-        #     "Gamma Score": score
-        # })
         if epoch % 5 == 0:
             print(f'stop point : {stop_point}')
             if score > best_score:
                 best_score = score
                 stop_point = initial_stop_point
-                # x_syn = save_synthetic(vae, x, train_epoch, 'trial_010', X.shape[1])
+                # x_syn = save_synthetic(vae, x, epoch, args.batch_size, args.learning_rate, X.shape[1])
                 # x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_004', X.shape[1])
             else:
                 stop_point -= 1
@@ -275,13 +275,12 @@ def main(args, rna_dataset):
             "ELBO": avg_loss,
             "Reconstruction Error": avg_reconstr_loss,
             "KL-Divergence": avg_kl_loss,
-            "Gamma Score": score
+            "Gamma_Score": score
         })
         if stop_point == 0:
-            train_epoch = epoch
-            # x_syn = save_synthetic(vae, x, train_epoch, 'trial_010', X.shape[1])
+            x_syn = save_synthetic(vae, x, epoch, args.batch_size, args.learning_rate, X.shape[1])
             # x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_005', X.shape[1])
-            stop_point_done = True
+            break
 
     with torch.no_grad():
         for epoch in range(args.epochs):
@@ -290,15 +289,18 @@ def main(args, rna_dataset):
                 if x.is_cuda != True:
                     x = x.cuda()
                 if multivariate:
+                    mean, log_var, z_mean, z_log_var = vae(x, y)
                     losses = loss_fn_gaussian(x, mean, log_var, z_mean, z_log_var)
-                elif multivariate == False:
+                        
+                elif multivariate==False:
+                    recon_x, mean, log_var, z = vae(x, y)
                     losses = loss_fn_bernoulli(recon_x, x, mean, log_var)
                 test_loss = losses['elbo'].clone()
 
                 if batch_idx == len(test_loader) - 1:
                     print('====> Test set loss: {:.4f}'.format(test_loss.item()))
 
-    x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_001', X.shape[1])
+    x_syn = save_synthetic(vae, x, epoch, args.batch_size, args.learning_rate, X.shape[1])
     draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets)
 
 if __name__ == '__main__':
