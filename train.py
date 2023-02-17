@@ -19,8 +19,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
 import wandb
-from torch.utils.tensorboard import SummaryWriter
-writer = SummaryWriter()
 
 def draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets, normalize=False):
     if normalize:
@@ -110,7 +108,7 @@ def generate_synthetic_n_save(vae_model, le, X, gene_names, Y_test_tissues, epoc
 
 def main(args, rna_dataset):
     # wandb
-    wandb.init(project="CVAE", reinit=True)
+    wandb.init(project="Multivariate Gaussian CVAE", name="gaussian mse d18000 b194 lr1e-04", reinit=True)
     wandb.config.update(args)
     
     torch.manual_seed(args.seed)
@@ -164,12 +162,13 @@ def main(args, rna_dataset):
     
     # loss function
     mse_criterion = nn.MSELoss(size_average=False)
-    def loss_fn_gaussian(x, mean, log_var, z_mean, z_log_var):
+    def loss_fn_gaussian(x, mean, log_var, z_mean, z_sigma):
         # reconstruction error
-        reconstr_loss = mse_criterion(
-            z_mean.view(-1, view_size), x.view(-1, view_size))
-        # ln(0)=-Infinity을 피하기 위해 1e-10 추가
-        # reconstr_loss = torch.sum((0.5 * (z_log_var)) + (x - z_mean) ** 2 / (2 * torch.exp(z_log_var)))
+        # reconstr_loss = mse_criterion(
+        #     torch.tanh(z_mean), x)
+        std = z_sigma.mean()
+        eq = x - torch.tanh(z_mean)
+        reconstr_loss = torch.sum((0.5*torch.log(std)) + eq**2 / 2 / (std**2))
             
         # Kullback-Leibler divergence
         kl_loss = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
@@ -220,8 +219,8 @@ def main(args, rna_dataset):
             if x.is_cuda != True:
                 x = x.cuda()
             if args.conditional and multivariate:
-                mean, log_var, z_mean, z_log_var = vae(x, y)
-                losses = loss_fn_gaussian(x, mean, log_var, z_mean, z_log_var)
+                mean, log_var, z_mean, z_sigma = vae(x, y)
+                losses = loss_fn_gaussian(x, mean, log_var, z_mean, z_sigma)
                     
             elif args.conditional and multivariate==False:
                 recon_x, mean, log_var, z = vae(x, y)
@@ -259,8 +258,7 @@ def main(args, rna_dataset):
             if score > best_score:
                 best_score = score
                 stop_point = initial_stop_point
-                # x_syn = save_synthetic(vae, x, epoch, args.batch_size, args.learning_rate, X.shape[1])
-                # x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_004', X.shape[1])
+                x_syn = save_synthetic(vae, x, Y_test, epoch, args.batch_size, args.learning_rate, X.shape[1])
             else:
                 stop_point -= 1
             
@@ -275,7 +273,7 @@ def main(args, rna_dataset):
             "ELBO": avg_loss,
             "Reconstruction Error": avg_reconstr_loss,
             "KL-Divergence": avg_kl_loss,
-            "Gamma_Score": score
+            "Gamma Score": score
         })
         if stop_point == 0:
             x_syn = save_synthetic(vae, x, epoch, args.batch_size, args.learning_rate, X.shape[1])
@@ -289,25 +287,22 @@ def main(args, rna_dataset):
                 if x.is_cuda != True:
                     x = x.cuda()
                 if multivariate:
-                    mean, log_var, z_mean, z_log_var = vae(x, y)
                     losses = loss_fn_gaussian(x, mean, log_var, z_mean, z_log_var)
-                        
-                elif multivariate==False:
-                    recon_x, mean, log_var, z = vae(x, y)
+                elif multivariate == False:
                     losses = loss_fn_bernoulli(recon_x, x, mean, log_var)
                 test_loss = losses['elbo'].clone()
 
                 if batch_idx == len(test_loader) - 1:
                     print('====> Test set loss: {:.4f}'.format(test_loss.item()))
 
-    x_syn = save_synthetic(vae, x, epoch, args.batch_size, args.learning_rate, X.shape[1])
+    x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_001', X.shape[1])
     draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets)
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--epochs", type=int, default=300)
+    parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--batch_size", type=int, default=194)
     parser.add_argument("--learning_rate", type=float, default=0.0001) # bernoulli 0.001
     parser.add_argument("--l2scale",type=float, default=0.00001)
@@ -316,7 +311,7 @@ if __name__ == '__main__':
     parser.add_argument("--latent_size", type=int, default=50)
     parser.add_argument("--conditional", action='store_true', default=True)
     parser.add_argument("--gpu_id", type=int, default=0)
-    parser.add_argument("--num_genes", type=int, default=1000)
+    parser.add_argument("--num_genes", type=int, default=18000)
     parser.add_argument("--multivariate", type=int, default=1)
 
     args = parser.parse_args()
