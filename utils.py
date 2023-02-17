@@ -262,7 +262,7 @@ def get_representation(tissue, datasets):
 ###########################
 ###    save_synthetic   ###
 ###########################
-def save_synthetic(vae_model, x, epoch, trial_name, dim_size):
+def save_synthetic(vae_model, x, y_test, epoch, batch_size, lr, dim_size):
     model_dir = '../checkpoints/models/cvae/'
 
     with torch.no_grad():
@@ -270,9 +270,10 @@ def save_synthetic(vae_model, x, epoch, trial_name, dim_size):
         
         date_val = datetime.today().strftime("%Y%m%d%H%M")
         
-        file = f'../checkpoints/models/cvae/gen_rnaseqdb_cvae_{date_val}_{trial_name}_epoch{epoch}_dim{dim_size}_.pkl'
+        file = f'../checkpoints/models/cvae/gen_rnaseqdb_cvae_{date_val}_bat{batch_size}_epoch{epoch}_dim{dim_size}_lr{lr}_.pkl'
         data = {'model': vae_model,
-                'x_syn': x_syn
+                'x_syn': x_syn,
+                'y_syn': y_test,
                 }
         with open(file, 'wb') as files:
             pickle.dump(data, files)
@@ -286,15 +287,8 @@ def generate_synthetic_n_save(vae_model, le, X, gene_names, Y_test_tissues, epoc
     model_dir = '../checkpoints/models/cvae/'
 
     with torch.no_grad():
-        # number_of_samples = 500
-        # labels_to_generate = []
         x_synthetic = []
         y_synthetic = []
-        
-        # for label_value in label_encoder.classes_:
-        #     label_to_generate = [label_value for i in range(samples_per_labels)]
-        #     labels_to_generate += label_to_generate
-        # all_samples = np.array(labels_to_generate)
         all_samples = Y_test_tissues
         le = LabelEncoder()
         onehot_c = le.fit_transform(all_samples)
@@ -310,10 +304,7 @@ def generate_synthetic_n_save(vae_model, le, X, gene_names, Y_test_tissues, epoc
         
         print(f'x_syn.shape : {x_syn.shape}')
         date_val = datetime.today().strftime("%Y%m%d%H%M")
-        
-        # pd.DataFrame(x_synthetic, columns=gene_names).to_csv(f'{model_dir}gen_rnaseqdb_cvae_{date_val}_{trial_name}_epoch{epoch}_dim{dim_size}_expressions.csv', index=False)
-        # pd.DataFrame(y_synthetic, columns=['label']).to_csv(f'{model_dir}gen_rnaseqdb_cvae_{date_val}_{trial_name}_epoch{epoch}_dim{dim_size}_labels.csv', index=False)
-   
+
         file = f'../checkpoints/models/cvae/gen_rnaseqdb_cvae_{date_val}_{trial_name}_epoch{epoch}_dim{dim_size}_.pkl'
         data = {'model': vae_model,
                 'x_syn': x_syn
