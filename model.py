@@ -1,8 +1,5 @@
 import torch
 import torch.nn as nn
-from torch.utils.tensorboard import SummaryWriter
-
-writer = SummaryWriter('logs/')
 
 def idx2onehot(idx, n):
  
@@ -18,7 +15,6 @@ def idx2onehot(idx, n):
     """
 
     return onehot
-
 class CVAE(nn.Module):
 
     def __init__(self, data_dim, compress_dims, latent_size, decompress_dims, conditional=True, num_labels=0, view_size=1000, multivariate=False):
@@ -76,8 +72,8 @@ class CVAE(nn.Module):
         
         if self.multivariate:
             # gaussian decoder
-            z_means, z_logvar = self.decoder(z, c)
-            return means, logvar, z_means, z_logvar
+            z_means, z_sigmas = self.decoder(z, c)
+            return means, logvar, z_means, z_sigmas
         else:
             # bernoulli decoder
             recon_x = self.decoder(z, c)
@@ -97,16 +93,14 @@ class CVAE(nn.Module):
         if n == 0:
             n = self.num_labels
         batch_size = n
-        z = torch.randn([batch_size, self.latent_size])
+        mean = torch.zeros([batch_size, self.latent_size])
         
         if self.multivariate:
             # gaussian decoder
-            z_means, z_logvar = self.decoder(z, c)
-            z_std = torch.exp(0.5 * z_logvar)
-            z_eps = torch.randn([batch_size, z_std.shape[1]])
-            if z_eps.is_cuda != True:
-                z_eps = z_eps.cuda()
-            recon_x = z_means + z_std * z_eps # latent vector
+            z_std = mean + 1
+            noise = torch.normal(mean=mean, std=z_std).cuda()
+            z_means, z_sigma = self.decoder(noise, c)
+            recon_x = torch.tanh(z_means)
             return recon_x
         else:
             recon_x = self.decoder(z, c)
@@ -229,7 +223,8 @@ class Decoder(nn.Module):
             # gaussian decoder
             self.MLP = nn.Sequential(*seq)
             self.linear_z_means = nn.Linear(out_dim, data_dim)
-            self.linear_z_logvar = nn.Linear(out_dim, data_dim)
+            # identity covariance
+            self.linear_z_sigma = nn.Parameter(torch.ones(data_dim))
         else:
             # bernoulli decoder
             seq += [
@@ -260,8 +255,8 @@ class Decoder(nn.Module):
         if self.multivariate:
             # gaussian decoder
             means = self.linear_z_means(x)
-            logvars = self.linear_z_logvar(x)
-            return means, logvars
+            sigmas = self.linear_z_sigma
+            return means, sigmas
         else:
             # bernoulli decoder
             return x
