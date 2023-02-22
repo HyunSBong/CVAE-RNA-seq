@@ -175,15 +175,35 @@ def scatter_2d_cancer(data_2d, labels, cancer, colors=None, **kwargs):
     lgnd = plt.legend(markerscale=3)
     return plt.gca()
 
-def plot_umap(emb_2d, x_test, x_syn, test_tissue, test_dataset):
+def get_representation(tissue, datasets):
+    cat_dicts = []
+
+    tissues_dict_inv = np.array(list(sorted(set(tissue))))
+    tissues_dict = {t: i for i, t in enumerate(tissues_dict_inv)}
+    tissues = np.vectorize(lambda t: tissues_dict[t])(tissue)
+    cat_dicts.append(tissues_dict_inv)
+
+    dataset_dict_inv = np.array(list(sorted(set(datasets))))
+    dataset_dict = {d: i for i, d in enumerate(dataset_dict_inv)}
+    datasets = np.vectorize(lambda t: dataset_dict[t])(datasets)
+    cat_dicts.append(dataset_dict_inv)
+
+    cat_covs = np.concatenate((tissues[:, None], datasets[:, None]), axis=-1)
+    cat_covs = np.int32(cat_covs)
+    
+    return dataset_dict_inv, cat_covs
+
+def plot_umap(emb_2d, x_test, x_syn, test_tissue, test_dataset, syn_tissue, syn_dataset):
     
     dataset_dict_inv, cat_covs = get_representation(test_tissue, test_dataset)
+    syn_dataset_dict_inv, syn_cat_covs = get_representation(syn_tissue, syn_dataset)
     
     x = np.concatenate((x_test, x_syn), axis=0)
-    t = np.concatenate((test_tissue, test_tissue), axis=0)
+    t = np.concatenate((test_tissue, syn_tissue), axis=0)
     s = np.array(['real'] * x_test.shape[0] + ['gen'] * x_syn.shape[0])
-    c = np.array(['normal' if dataset_dict_inv[q] != 'tcga-t' else 'cancer' for q in cat_covs[:, 1]])
-    c = np.concatenate((c, c), axis=0)
+    c1 = np.array(['normal' if dataset_dict_inv[q] != 'tcga-t' else 'cancer' for q in cat_covs[:, 1]])
+    c2 = np.array(['normal' if syn_dataset_dict_inv[q] != 'tcga-t' else 'cancer' for q in syn_cat_covs[:, 1]])
+    c = np.concatenate((c1, c2), axis=0)
     print(f'x : {x.shape}')
     print(f't : {t.shape}')
     print(f'c : {c.shape}')
@@ -194,7 +214,7 @@ def plot_umap(emb_2d, x_test, x_syn, test_tissue, test_dataset):
 
     plt.subplot(1, 3, 1)
     colors =  plt.get_cmap('tab20').colors
-    ax = scatter_2d(emb_2d, t, s=10, marker='.')
+    ax = scatter_2d(emb_2d, t, colors=colors, s=10, marker='.')
     lgd = ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
                     fancybox=True, shadow=True, ncol=3, markerscale=5)
     plt.axis('off')
@@ -202,18 +222,29 @@ def plot_umap(emb_2d, x_test, x_syn, test_tissue, test_dataset):
     plt.subplot(1, 3, 2)
     # colors = ['brown', 'lightgray']
     colors = ['lightgray', 'brown']
-    ax = scatter_2d(emb_2d, s, colors=colors, s=10, marker='.')
+    ax = scatter_2d(emb_2d, c, colors=colors, s=10, marker='.')
     ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
-                  fancybox=True, shadow=True, ncol=3, markerscale=5)
+              fancybox=True, shadow=True, ncol=3, markerscale=5)
     plt.axis('off')
     
     plt.subplot(1, 3, 3)
-    # colors = ['lightgray', 'blue']
-    colors = ['blue', 'lightgray']
+    colors = ['lightgray', 'blue']
+    # colors = ['lightgray', 'skyblue']
+    # colors = ['blue', 'lightgray']
     ax = scatter_2d(emb_2d, s, colors=colors, s=10, marker='.')
     ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
               fancybox=True, shadow=True, ncol=3, markerscale=5)
     plt.axis('off')
+
+def umap_plot_draw(test, syn, test_tissue, test_dataset, syn_tissue, syn_dataset, n_neighbors, min_dist):
+    x = np.concatenate((test, syn), axis=0)
+    model = umap.UMAP(n_neighbors=n_neighbors,
+                      min_dist=min_dist,
+                      n_components=2,
+                      random_state=1111)
+    model.fit(x)
+    emb_2d = model.transform(x)
+    plot_umap(emb_2d, test, syn, test_tissue, test_dataset, syn_tissue, syn_dataset)
 
 ###########################
 ### generate_synthetic  ###
@@ -241,24 +272,6 @@ def generate_synthetic(vae_model, le, X, gene_names, Y_test_tissues):
     print(f'x_syn.shape : {x_syn.shape}')
     return x_syn
 
-def get_representation(tissue, datasets):
-    cat_dicts = []
-
-    tissues_dict_inv = np.array(list(sorted(set(tissue))))
-    tissues_dict = {t: i for i, t in enumerate(tissues_dict_inv)}
-    tissues = np.vectorize(lambda t: tissues_dict[t])(tissue)
-    cat_dicts.append(tissues_dict_inv)
-
-    dataset_dict_inv = np.array(list(sorted(set(datasets))))
-    dataset_dict = {d: i for i, d in enumerate(dataset_dict_inv)}
-    datasets = np.vectorize(lambda t: dataset_dict[t])(datasets)
-    cat_dicts.append(dataset_dict_inv)
-
-    cat_covs = np.concatenate((tissues[:, None], datasets[:, None]), axis=-1)
-    cat_covs = np.int32(cat_covs)
-    
-    return dataset_dict_inv, cat_covs
-
 ###########################
 ###    save_synthetic   ###
 ###########################
@@ -266,14 +279,14 @@ def save_synthetic(vae_model, x, y_test, epoch, batch_size, lr, dim_size):
     model_dir = '../checkpoints/models/cvae/'
 
     with torch.no_grad():
-        x_syn = x.detach().cpu().numpy() # (7500,1000)
+        x_syn = x.detach().cpu().numpy()
         
         date_val = datetime.today().strftime("%Y%m%d%H%M")
         
         file = f'../checkpoints/models/cvae/gen_rnaseqdb_cvae_{date_val}_bat{batch_size}_epoch{epoch}_dim{dim_size}_lr{lr}_.pkl'
         data = {'model': vae_model,
                 'x_syn': x_syn,
-                'y_syn': y_test,
+                'y_syn': y_test
                 }
         with open(file, 'wb') as files:
             pickle.dump(data, files)
