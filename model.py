@@ -15,6 +15,7 @@ def idx2onehot(idx, n):
     """
 
     return onehot
+
 class CVAE(nn.Module):
 
     def __init__(self, data_dim, compress_dims, latent_size, decompress_dims, conditional=True, num_labels=0, view_size=1000, multivariate=False):
@@ -93,16 +94,18 @@ class CVAE(nn.Module):
         if n == 0:
             n = self.num_labels
         batch_size = n
-        mean = torch.zeros([batch_size, self.latent_size])
         
         if self.multivariate:
             # gaussian decoder
-            z_std = mean + 1
-            noise = torch.normal(mean=mean, std=z_std).cuda()
-            z_means, z_sigma = self.decoder(noise, c)
-            recon_x = torch.tanh(z_means)
+            z_mean = torch.zeros([batch_size, self.latent_size])
+            z_std = z_mean + 1
+            noise = torch.normal(mean=z_mean, std=z_std).cuda()
+            z_means, z_sigmas = self.decoder(noise, c)
+            recon_x = z_means
+
             return recon_x
         else:
+            z = torch.randn([batch_size, self.latent_size])
             recon_x = self.decoder(z, c)
             return recon_x
 
@@ -146,11 +149,13 @@ class Encoder(nn.Module):
         seq = []
         seq += [
             nn.Linear(data_dim, compress_dims[0]),
+            nn.BatchNorm1d(num_features=compress_dims[0]),
             nn.ReLU()
         ]
         for i, (in_size, out_size) in enumerate(zip(compress_dims[:-1], compress_dims[1:])):
             seq += [
                 nn.Linear(in_size, out_size),
+                nn.BatchNorm1d(num_features=out_size),
                 nn.ReLU()
             ]
         self.MLP = nn.Sequential(*seq)
@@ -215,6 +220,7 @@ class Decoder(nn.Module):
         for i, (in_size, out_size) in enumerate(zip([input_size]+decompress_dims[:-1], decompress_dims)):
             seq += [
                     nn.Linear(in_size, out_size),
+                    nn.BatchNorm1d(num_features=out_size),
                     nn.ReLU()
                 ]
             out_dim = out_size
