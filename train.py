@@ -5,6 +5,7 @@ import argparse
 import pandas as pd
 import pickle
 import datetime
+import random
 from datetime import datetime
 from collections import defaultdict
 from utils import *
@@ -20,23 +21,6 @@ from sklearn.pipeline import Pipeline
 
 import wandb
 
-def draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets, normalize=False):
-    if normalize:
-        x_log = np.log1p(x_syn)
-        x_log = np.float32(x_log)
-        x_mean = np.mean(x_log, axis=0)
-        x_std = np.std(x_log, axis=0)
-        x_syn = standardize(x_log, mean=x_mean, std=x_std)
-
-    x = np.concatenate((X_test, x_syn), axis=0)
-    model = umap.UMAP(n_neighbors=300,
-                    min_dist=0.7,
-                    n_components=2,
-                    random_state=1111)
-    model.fit(x)
-    emb_2d = model.transform(x)
-    plot_umap(emb_2d, X_test, x_syn, Y_test_tissues, Y_test_datasets)
-
 def load_data(num_genes,multivariate):
     train = pd.read_csv(f'../data/RNAseqDB/x_train_all_tissue.csv')
     test = pd.read_csv(f'../data/RNAseqDB/x_test_all_tissue.csv')
@@ -51,7 +35,9 @@ def load_data(num_genes,multivariate):
     X = np.log(1 + X)
     X = np.float32(X)
 
-    Y = df_real[["TISSUE_GTEX", "DATASET"]].values
+    df_real_y_copy = df_real[["TISSUE_GTEX", "DATASET"]].copy()
+    df_real_y_copy['TISSUE_DATASET'] = df_real_y_copy['TISSUE_GTEX'] + "-" + df_real_y_copy['DATASET']
+    Y = df_real_y_copy[["TISSUE_GTEX", "DATASET", "TISSUE_DATASET"]].values
     X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, stratify=Y)
     gene_names = train_genes
 
@@ -59,7 +45,7 @@ def load_data(num_genes,multivariate):
     std_scaler = StandardScaler().fit(X_train)
     X_train = std_scaler.transform(X_train)
     X_test = std_scaler.transform(X_test)
-    if multivariate == 1:
+    if multivariate == 0:
         minmax_scaler = MinMaxScaler().fit(X_train)
         X_train = minmax_scaler.transform(X_train)
         X_test = minmax_scaler.transform(X_test)
@@ -71,48 +57,15 @@ def load_data(num_genes,multivariate):
                             'gene_names': gene_names}
     return dict_train_test_splited
 
-def generate_synthetic_n_save(vae_model, le, X, gene_names, Y_test_tissues, epoch, trial_name, dim_size):
-    genes_to_validate = 40
-    original_means = np.mean(X, axis=0)
-    original_vars = np.var(X, axis=0)
-    model_dir = '../checkpoints/models/cvae/'
-
-    with torch.no_grad():
-        x_synthetic = []
-        y_synthetic = []
-        
-        all_samples = Y_test_tissues
-        le = LabelEncoder()
-        onehot_c = le.fit_transform(all_samples)
-        
-        c = all_samples # ['bladder' 'bladder' 'bladder' ... 'uterus' 'uterus' 'uterus']
-        c = torch.from_numpy(onehot_c) # [0 0 0 ... 14 14 14]
-        x = vae_model.inference(n=len(all_samples), c=c)
-        
-        x_syn = x.detach().cpu().numpy() # (7500,1000)
-
-        x_synthetic += list(x.detach().cpu().numpy())
-        y_synthetic += list(np.ravel(le.transform(all_samples)))
-        
-        print(f'x_syn.shape : {x_syn.shape}')
-        date_val = datetime.today().strftime("%Y%m%d%H%M")
-
-        file = f'../checkpoints/models/cvae/gen_rnaseqdb_cvae_{date_val}_{trial_name}_epoch{epoch}_dim{dim_size}_.pkl'
-        data = {'model': vae_model,
-                'x_syn': x_syn
-                }
-        with open(file, 'wb') as files:
-            pickle.dump(data, files)
-            
-    return x_syn
-
 def main(args, rna_dataset):
     # wandb
-    wandb.init(project="Multivariate Gaussian CVAE", name="gaussian mse d18000 b194 lr1e-04", reinit=True)
+    wandb.init(project="Multivariate Gaussian CVAE loss test", name="newModel2 gaussian mse covariance d1000 b50 lr1e-04", reinit=True)
     wandb.config.update(args)
     
+    random.seed(args.seed)
+    os.environ['PYTHONHASHSEED'] = str(args.seed)
+    np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    latest_loss = torch.tensor(1)
     
     # GPU 
     os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
@@ -122,8 +75,10 @@ def main(args, rna_dataset):
     print('Current cuda device:', torch.cuda.current_device())
     print('Count of using GPUs:', torch.cuda.device_count())
     
+    # use bernoulli decoder
     multivariate = False
     if args.multivariate == 1:
+        # use gaussian decoder
         multivariate = True
     
     # Train/Test dataset & tissues
@@ -133,21 +88,23 @@ def main(args, rna_dataset):
     (X_test, Y_test) = rna_dataset['test_set']
     Y_tissues = Y[:,0]
     Y_datasets = Y[:,1]
+    Y_tissue_datasets = Y[:,2]
     Y_train_tissues = Y_train[:,0]
     Y_train_datasets = Y_train[:,1]
+    Y_train_tissue_datasets = Y_train[:,2]
     Y_test_tissues = Y_test[:,0]
     Y_test_datasets = Y_test[:,1]
+    Y_test_tissue_datasets = Y_test[:,2]
     gene_names = rna_dataset['gene_names'] # ex) COL4A1, IFT27,,,
     
-    num_tissue = len(set(Y_tissues)) # 15 (breast, lung, liver 등 15개 tissue)
+    num_tissue = len(set(Y_tissue_datasets)) # 15 (breast, lung, liver 등 15개 tissue)
     view_size = X.shape[1]
-    log2pi = torch.log2(torch.Tensor([np.pi])).cuda()
     
     # one-hot encoding
     le = LabelEncoder()
-    le.fit(Y_train_tissues)
-    train_labels = le.transform(Y_train_tissues) # bladder,uterus,,, -> 0,14,,,
-    test_labels = le.transform(Y_test_tissues)
+    le.fit(Y_train_tissue_datasets)
+    train_labels = le.transform(Y_train_tissue_datasets) # bladder,uterus,,, -> 0,14,,,
+    test_labels = le.transform(Y_test_tissue_datasets)
     
     # DataLoader
     train_label = torch.as_tensor(train_labels)
@@ -161,30 +118,37 @@ def main(args, rna_dataset):
     test_loader = DataLoader(dataset=test_tensor, batch_size=args.batch_size, shuffle=True)
     
     # loss function
-    mse_criterion = nn.MSELoss(size_average=False)
+    mse_criterion = nn.MSELoss(size_average=False, reduction="sum")
     def loss_fn_gaussian(x, mean, log_var, z_mean, z_sigma):
+        
         # reconstruction error
-        # reconstr_loss = mse_criterion(
-        #     torch.tanh(z_mean), x)
-        std = z_sigma.mean()
-        eq = x - torch.tanh(z_mean)
-        reconstr_loss = torch.sum((0.5*torch.log(std)) + eq**2 / 2 / (std**2))
+        reconstr_loss = mse_criterion(
+            z_mean, x)
+        # std = z_sigma.mean()
+        # # eq = x - torch.tanh(z_mean)
+        # square = (x - z_mean).pow(2)
+        # reconstr_loss = torch.sum((0.5*torch.log(std)) + square / 2 / std.pow(2))
+        # reconstr_loss = torch.sum((0.5*z_log_var) + square / 2 / z_log_var.exp())
+        # reconstr_loss /= x.size(0)
+        
+        # reconstr_loss = torch.sum((x - z_mean)**2)
             
         # Kullback-Leibler divergence
         kl_loss = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
+        
         elbo = (reconstr_loss + kl_loss) / x.size(0)
-        # x.size => (batch_size,18000)
         
         return {'elbo': elbo, 'reconstr_loss': reconstr_loss, 'kl_loss': kl_loss}
-        
+    
     def loss_fn_bernoulli(recon_x, x, mean, log_var):
         # reconstruction error
         reconstr_loss = torch.nn.functional.binary_cross_entropy(
             recon_x.view(-1, view_size), x.view(-1, view_size), reduction='sum')
         # Kullback-Leibler divergence
-        kl_loss = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp()) # e^log_var
-            
-        return {'elbo': (reconstr_loss + kl_loss) / x.size(0),'reconstr_loss': reconstr_loss, 'kl_loss': kl_loss}
+        kl_loss = -0.5 * torch.sum(1 + log_var - mean**2 - log_var.exp())
+        elbo = (reconstr_loss + kl_loss) / x.size(0)
+        
+        return {'elbo': elbo, 'reconstr_loss': reconstr_loss, 'kl_loss': kl_loss}
 
     vae = CVAE(
         data_dim=X_train.shape[1],
@@ -201,9 +165,8 @@ def main(args, rna_dataset):
     
     # Train
     stop_point = 10
-    best_score = -np.inf
+    best_score = 0.0000000000001
     initial_stop_point = stop_point
-    stop_point_done = False
     losses = []
     
     score = 0
@@ -218,10 +181,10 @@ def main(args, rna_dataset):
             x, y = x.to(device), y.to(device)
             if x.is_cuda != True:
                 x = x.cuda()
+                
             if args.conditional and multivariate:
                 mean, log_var, z_mean, z_sigma = vae(x, y)
                 losses = loss_fn_gaussian(x, mean, log_var, z_mean, z_sigma)
-                    
             elif args.conditional and multivariate==False:
                 recon_x, mean, log_var, z = vae(x, y)
                 losses = loss_fn_bernoulli(recon_x, x, mean, log_var)
@@ -240,28 +203,17 @@ def main(args, rna_dataset):
             loss.backward(retain_graph=True)
             optimizer.step()
             
-            # c = torch.from_numpy(test_labels) # le.fit_transform(Y_train_tissues)
-            # x = vae.inference(n=c.size(0), c=c)
-            # score = score_fn(X_test, x.detach().cpu().numpy())
-            # wandb.log({
-            #     "ELBO": loss.item(),
-            #     "Reconstruction Error": losses['reconstr_loss'].item(),
-            #     "KL-Divergence": losses['kl_loss'].item(),
-            #     "Gamma Score": score
-            # })
-            
+        print(f'stop point : {stop_point}')
         c = torch.from_numpy(test_labels) # le.fit_transform(Y_train_tissues)
-        x = vae.inference(n=c.size(0), c=c)
-        score = score_fn(X_test, x.detach().cpu().numpy())
-        if epoch % 5 == 0:
-            print(f'stop point : {stop_point}')
-            if score > best_score:
-                best_score = score
-                stop_point = initial_stop_point
-                x_syn = save_synthetic(vae, x, Y_test, epoch, args.batch_size, args.learning_rate, X.shape[1])
-            else:
-                stop_point -= 1
-            
+        x_syn = vae.inference(n=c.size(0), c=c)
+        score = score_fn(X_test, x_syn.detach().cpu().numpy())
+        if score > best_score or epoch % 50 == 0:
+            best_score = score
+            stop_point = initial_stop_point
+            x_syn = save_synthetic(vae, x_syn, Y_test, epoch, args.batch_size, args.learning_rate, X.shape[1])
+        else:
+            stop_point -= 1
+        
         avg_loss = sum_elbo / len(train_loader)
         avg_kl_loss = sum_kl_loss / len(train_loader)
         avg_reconstr_loss = sum_reconstr_loss / len(train_loader)
@@ -275,10 +227,6 @@ def main(args, rna_dataset):
             "KL-Divergence": avg_kl_loss,
             "Gamma Score": score
         })
-        if stop_point == 0:
-            x_syn = save_synthetic(vae, x, epoch, args.batch_size, args.learning_rate, X.shape[1])
-            # x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_005', X.shape[1])
-            break
 
     with torch.no_grad():
         for epoch in range(args.epochs):
@@ -286,24 +234,30 @@ def main(args, rna_dataset):
             for batch_idx, (x, y) in enumerate(test_loader):
                 if x.is_cuda != True:
                     x = x.cuda()
-                if multivariate:
-                    losses = loss_fn_gaussian(x, mean, log_var, z_mean, z_log_var)
-                elif multivariate == False:
+                if args.conditional and multivariate:
+                    mean, log_var, z_mean, z_sigma = vae(x, y)
+                    losses = loss_fn_gaussian(x, mean, log_var, z_mean, z_sigma)
+                elif args.conditional and multivariate==False:
+                    recon_x, mean, log_var, z = vae(x, y)
                     losses = loss_fn_bernoulli(recon_x, x, mean, log_var)
+                else:
+                    recon_x, mean, log_var, z = vae(x)
+                    losses = loss_fn_bernoulli(recon_x, x, mean, log_var)
+                    
                 test_loss = losses['elbo'].clone()
 
                 if batch_idx == len(test_loader) - 1:
                     print('====> Test set loss: {:.4f}'.format(test_loss.item()))
 
-    x_syn = generate_synthetic_n_save(vae, le, X, gene_names, Y_test_tissues, train_epoch, 'trial_001', X.shape[1])
-    draw_umap(X_test, x_syn, Y_test_tissues, Y_test_datasets)
+    x_syn = save_synthetic(vae, x, Y_test, args.epochs, args.batch_size, args.learning_rate, X.shape[1])
+    umap_plot_draw(X_test, x_syn, Y_test_tissues, Y_test_datasets, Y_train_tissues, Y_train_datasets, 300, 0.7)
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--epochs", type=int, default=1000)
-    parser.add_argument("--batch_size", type=int, default=194)
+    parser.add_argument("--epochs", type=int, default=1500)
+    parser.add_argument("--batch_size", type=int, default=50)
     parser.add_argument("--learning_rate", type=float, default=0.0001) # bernoulli 0.001
     parser.add_argument("--l2scale",type=float, default=0.00001)
     parser.add_argument("--compress_dims", type=list, default=[1000, 512, 256])
