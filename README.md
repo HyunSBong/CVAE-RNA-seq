@@ -1,4 +1,5 @@
 # CVAE-RNA-seq
+<img width="749" alt="스크린샷 2023-04-02 오후 11 47 58" src="https://user-images.githubusercontent.com/69189272/229360369-fd217d1c-6749-462f-b617-30adc314c4f1.png">
 github for "Conditional Variational Autoencoder-based Generative Model for Gene Expression Data Augmentation"
 https://arxiv.org/abs/180xxxx [late,,]
 
@@ -15,12 +16,15 @@ In this study, samples of 15 common tissues (lung, breast, kidney, thyroid, colo
 
 UMAP
 ----------
-- Test 2745 samples, 18154 genes.
+- Test 2745 samples, 978 L1000 landmark genes.
+
 - Gamma score 0.98
-<img width="712" alt="스크린샷 2023-02-24 오전 2 25 11" src="https://user-images.githubusercontent.com/69189272/220983236-25ae773f-0264-47aa-830d-bee86627d5ef.png">
-- Compare with datasets such as [Ramon Viñas, Helena Andrés-Terré, Pietro Liò, Kevin Bryson, Adversarial generation of gene expression data, Bioinformatics, Volume 38, Issue 3, February 2022, Pages 730–737]
+<img width="766" alt="스크린샷 2023-04-02 오후 11 48 23" src="https://user-images.githubusercontent.com/69189272/229360395-d363555e-2e55-4405-bd3c-226868499f6d.png">
+
+- Compare with datasets such as [Ramon Viñas, Helena Andrés-Terré, Pietro Liò,
+Kevin Bryson, Adversarial generation of gene expression data, Bioinformatics, Volume 38, Issue 3, February 2022, Pages 730–737]
 - Gamma score 0.96
-<img width="1417" alt="bioinfo_sample" src="https://user-images.githubusercontent.com/69189272/217756386-82593ab1-4e83-4e23-9089-27ad56917c97.png">
+<img width="688" alt="스크린샷 2023-04-02 오후 11 48 56" src="https://user-images.githubusercontent.com/69189272/229360428-698ee774-7aac-450d-9a6e-5c232814d65f.png">
 
 
 Quick start
