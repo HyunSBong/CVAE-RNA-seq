@@ -1,4 +1,7 @@
 # CVAE-RNA-seq
+github for "Molecular generative model based on conditional variational autoencoder for de novo molecular design"
+https://arxiv.org/abs/180xxxx [late,,]
+
 Conditional variational generation of gene expression data
 
 To secure sufficient gene expression data, a study that develops and proposes a Contidional Variational Auto-Encoder 
