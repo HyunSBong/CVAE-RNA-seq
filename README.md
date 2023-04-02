@@ -3,7 +3,6 @@
 github for "Conditional Variational Autoencoder-based Generative Model for Gene Expression Data Augmentation"
 https://arxiv.org/abs/180xxxx [late,,]
 
-Conditional variational generation of gene expression data
 
 To secure sufficient gene expression data, a study that develops and proposes a Contidional Variational Auto-Encoder 
 
