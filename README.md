@@ -3,36 +3,31 @@
 github for "Conditional Variational Autoencoder-based Generative Model for Gene Expression Data Augmentation"
 https://arxiv.org/abs/180xxxx [late,,]
 
-
-To secure sufficient gene expression data, a study that develops and proposes a Contidional Variational Auto-Encoder 
-
-Dataset
+Overview
 ----------
-In this study, samples of 15 common tissues (lung, breast, kidney, thyroid, colon, stomach, prostate, saliva, liver, esophageal myopathy, esophageal mucosa, esophageal gastrointestinal tract, bladder, uterus, and cervix) of GTEx and TCGA were used. We followed the [pipeline](https://github.com/mskcc/RNAseqDB) described by Wang et al. (2018) to integrate data and modify the deployment effect. Thus, the entire dataset consists of 9147 samples and 18154 genes.
-- GTEx(Genotype-Tissue Expression) Dataset
-- TCGA(Cancer Genome Atlas) Dataset
-- RNA-seq(human transcriptomics) Dataset (9147 samples and 18154 genes )
+Gene expression data can be utilized in various studies, including the prediction of disease prognosis. However, there are challenges associated with collecting enough data due to cost constraints. In this paper, we propose a gene expression data generation model based on Conditional Variational Autoencoder. Our results demonstrate that the proposed model generates synthetic data with superior quality compared to two other state-of-the-art models for gene expression data generation, namely the Wasserstein Generative Adversarial Network with Gradient Penalty based model and the structured data generation models CTGAN and TVAE.
 
-UMAP
+Simple Result
 ----------
-- Test 2745 samples, 978 L1000 landmark genes.
+- Test 2745 samples, 969 L1000 landmark genes.
 
 - Gamma score 0.98
 <img width="766" alt="스크린샷 2023-04-02 오후 11 48 23" src="https://user-images.githubusercontent.com/69189272/229360395-d363555e-2e55-4405-bd3c-226868499f6d.png">
-
 - Compare with datasets such as [Ramon Viñas, Helena Andrés-Terré, Pietro Liò,
 Kevin Bryson, Adversarial generation of gene expression data, Bioinformatics, Volume 38, Issue 3, February 2022, Pages 730–737]
 - Gamma score 0.96
 <img width="688" alt="스크린샷 2023-04-02 오후 11 48 56" src="https://user-images.githubusercontent.com/69189272/229360428-698ee774-7aac-450d-9a6e-5c232814d65f.png">
 
-
-Quick start
+Dataset
 ----------
+In this study, samples of 15 common tissues (lung, breast, kidney, thyroid, colon, stomach, prostate, saliva, liver, esophageal myopathy, esophageal mucosa, esophageal gastrointestinal tract, bladder, uterus, and cervix) of GTEx and TCGA were used. We followed the [pipeline](https://github.com/mskcc/RNAseqDB) described by Wang et al. (2018) to integrate data and modify the deployment effect. Since then, 969 common genes with the L1000 landmark gene set were selected to create a dataset consisting of 9,146 samples and 969 genes.
+- GTEx(Genotype-Tissue Expression) Dataset
+- TCGA(Cancer Genome Atlas) Dataset
+- L1000 landmark 
+- RNA-seq(human transcriptomics) Dataset (9147 samples and 18154 genes )
 
-1. First, like  [RNAseqDB](https://github.com/mskcc/RNAseqDB) , create human transcriptomics data for 15 common tissues.
-
-2. You can train with the following command (num_genes: train genes, multivatiable: decoder 0;bernoulli, 1;gaussian)
-```
-python train.py --gpu_id=0 --epochs=300 --num_genes=1000 --multivatiable=0
-```
-3. You can see an umap plot is automatically drawn after the train.
+Install dependencies
+----------
+- torch >= 1.12.1
+- umap-learn >= 0.5.3
+- scikit-learn >= 1.1.1
