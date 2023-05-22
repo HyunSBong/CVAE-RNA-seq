@@ -28,12 +28,6 @@ def load_data(num_genes, multivariate):
     df_real_gene_columns = df_real.iloc[:,1:-2].columns
     train_genes = list(df_real_gene_columns)[:num_genes]
 
-    # GEO
-    # ncbi_geo = pd.read_csv('GeneExpressionOmnibus.txt', sep = "\t", engine='python', encoding = "cp949")
-    # pr_gene_symbol = set(ncbi_geo['pr_gene_symbol'].values)
-    # not_in = ['CHP', 'WDR67', 'CTSL1', 'BRP44', 'KIAA0494', 'PLSCR3', 'CCDC90A', 'GPER', 'KIAA0528']
-    # train_genes = list(pr_gene_symbol-set(not_in))
-
     X = df_real[train_genes].values
     # Log-transform data
     X = np.log(1 + X)
@@ -221,8 +215,6 @@ def main(args, rna_dataset):
         sum_reconstr_loss = 0
 
         for batch_idx, (x, y) in enumerate(train_loader):
-            optimizer.zero_grad()
-            
             x, y = x.to(device), y.to(device)
             if x.is_cuda != True:
                 x = x.cuda()
@@ -243,7 +235,8 @@ def main(args, rna_dataset):
             sum_elbo += losses['elbo']
             sum_kl_loss += losses['kl_loss']
             sum_reconstr_loss += losses['reconstr_loss']
-            
+               
+            optimizer.zero_grad()
             loss.backward(retain_graph=True)
             optimizer.step()
             
