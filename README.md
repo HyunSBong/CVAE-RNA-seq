@@ -1,7 +1,7 @@
 # CVAE-RNA-seq
-<img width="749" alt="스크린샷 2023-04-02 오후 11 47 58" src="https://user-images.githubusercontent.com/69189272/229360369-fd217d1c-6749-462f-b617-30adc314c4f1.png">
-github for "Conditional Variational Autoencoder-based Generative Model for Gene Expression Data Augmentation"
 RNA-seq generation model | [Paper](https://doi.org/10.5909/JBE.2023.28.3.275) | [Code](https://github.com/HyunSBong/CVAE-RNA-seq)
+github for "Conditional Variational Autoencoder-based Generative Model for Gene Expression Data Augmentation"
+<img width="749" alt="스크린샷 2023-04-02 오후 11 47 58" src="https://user-images.githubusercontent.com/69189272/229360369-fd217d1c-6749-462f-b617-30adc314c4f1.png">
 
 
 Overview
