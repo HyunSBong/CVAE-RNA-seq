@@ -12,16 +12,16 @@ Simple Result
 ----------
 
 - Test 2745 samples, 969 L1000 landmark genes.
-
-- Gamma score 0.98
   
-  <img width="766" alt="스크린샷 2023-04-02 오후 11 48 23" src="https://user-images.githubusercontent.com/69189272/229360395-d363555e-2e55-4405-bd3c-226868499f6d.png">
+  - Gamma score 0.98
+    
+    <img width="766" alt="스크린샷 2023-04-02 오후 11 48 23" src="https://user-images.githubusercontent.com/69189272/229360395-d363555e-2e55-4405-bd3c-226868499f6d.png">
 
 - Compare with datasets such as [Ramon Viñas, Helena Andrés-Terré, Pietro Liò, Kevin Bryson, Adversarial generation of gene expression data, Bioinformatics, Volume 38, Issue 3, February 2022, Pages 730–737]
-
-- Gamma score 0.96
   
-  <img width="688" alt="스크린샷 2023-04-02 오후 11 48 56" src="https://user-images.githubusercontent.com/69189272/229360428-698ee774-7aac-450d-9a6e-5c232814d65f.png">
+  - Gamma score 0.96
+    
+    <img width="688" alt="스크린샷 2023-04-02 오후 11 48 56" src="https://user-images.githubusercontent.com/69189272/229360428-698ee774-7aac-450d-9a6e-5c232814d65f.png">
 
 Dataset
 ----------
@@ -41,6 +41,22 @@ Install dependencies
 - Python packages
   - umap-learn >= 0.5.3
   - scikit-learn >= 1.1.1
+
+## Usage
+
+969 landmark gene sets were pretreated using log2 (expression_value+1) and standardization. You can download sample data for learning and testing from the Google Drive link below.
+
+[npy_data - Google Drive](https://drive.google.com/drive/folders/1CYyxJbu7D6MqsIqlAPNCvLFhkWjtK4xo?usp=sharing)
+
+### Model Train
+
+```bash
+python train.py
+```
+
+### Evaluation Notebook
+
+Please check the evaluation.ipynb file.
 
 ## Contact
 
