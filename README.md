@@ -56,7 +56,7 @@ python train.py
 
 ### Evaluation Notebook
 
-Please check the evaluation.ipynb file.
+Please check the <code>evaluation.ipynb</code> file.
 
 ## Contact
 
