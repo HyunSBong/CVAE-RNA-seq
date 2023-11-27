@@ -15,7 +15,6 @@ def idx2onehot(idx, n):
     """
 
     return onehot
-
 class CVAE(nn.Module):
 
     def __init__(self, data_dim, compress_dims, latent_size, decompress_dims, conditional=True, num_labels=0, view_size=1000, multivariate=False):

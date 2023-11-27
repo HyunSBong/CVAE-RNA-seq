@@ -7,6 +7,7 @@ from datetime import datetime
 import umap.umap_ as umap
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import LabelEncoder
+
 import seaborn as sns
 import matplotlib.pyplot as plt
 
@@ -294,14 +295,14 @@ def get_representation(tissue, datasets):
 ###    save_synthetic   ###
 ###########################
 def save_synthetic(vae_model, x, y_test, epoch, batch_size, lr, dim_size):
-    model_dir = '../checkpoints/models/cvae/'
+    model_dir = './checkpoints/'
 
     with torch.no_grad():
         x_syn = x.detach().cpu().numpy() # (7500,1000)
         
         date_val = datetime.today().strftime("%Y%m%d%H%M")
         
-        file = f'../checkpoints/models/cvae/gen_rnaseqdb_cvae_{date_val}_bat{batch_size}_epoch{epoch}_dim{dim_size}_lr{lr}_.pkl'
+        file = f'./checkpoints/gen_rnaseqdb_cvae_{date_val}_bat{batch_size}_epoch{epoch}_dim{dim_size}_lr{lr}_.pkl'
         data = {'model': vae_model,
                 'x_syn': x_syn,
                 'y_syn': y_test,
